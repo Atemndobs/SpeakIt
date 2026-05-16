@@ -1,6 +1,6 @@
 cask "speakit" do
-  version "0.2.0"
-  sha256 "10a099ca2ce48149db0cc35bbf34a1c764b7b06909fd6c2a1b457cfb77a109e6"
+  version "0.2.1"
+  sha256 "8dfb74843c12a579bd2d094826c035e409760ef9cc59b1e32a2e0ae4187eca62"
 
   url "https://github.com/Atemndobs/SpeakIt/releases/download/v#{version}/SpeakIt-#{version}.zip"
   name "SpeakIt"

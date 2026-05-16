@@ -10,15 +10,20 @@ APP_PATH="${DEST}/${APP_NAME}.app"
 
 cd "${REPO_ROOT}"
 
-echo "› Building release binary..."
-swift build -c release
+echo "› Building universal release binary (arm64 + x86_64)..."
+swift build -c release --arch arm64 --arch x86_64
+
+# Multi-arch builds land in .build/apple/Products/Release/ instead of
+# .build/release/. Fall back to single-arch path if needed.
+BIN_PATH=".build/apple/Products/Release/${APP_NAME}"
+[ -f "${BIN_PATH}" ] || BIN_PATH=".build/release/${APP_NAME}"
 
 echo "› Assembling ${APP_PATH}"
 mkdir -p "${DEST}"
 rm -rf "${APP_PATH}"
 mkdir -p "${APP_PATH}/Contents/MacOS"
 mkdir -p "${APP_PATH}/Contents/Resources"
-cp ".build/release/${APP_NAME}" "${APP_PATH}/Contents/MacOS/${APP_NAME}"
+cp "${BIN_PATH}" "${APP_PATH}/Contents/MacOS/${APP_NAME}"
 cp "scripts/Info.plist" "${APP_PATH}/Contents/Info.plist"
 printf "APPL????" > "${APP_PATH}/Contents/PkgInfo"
 
