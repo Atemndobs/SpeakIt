@@ -1,48 +1,75 @@
 # claude-speak
 
-Hear Claude Code responses aloud, via [SpeakIt](https://github.com/Atemndobs/SpeakIt) — a native macOS TTS app with high-quality voices and continuous playback.
+**Hear Claude Code talk back.** Every assistant response is spoken aloud automatically via [SpeakIt](https://github.com/Atemndobs/SpeakIt) — a native macOS TTS app with high-quality voices and continuous playback.
 
-- `/speak <text>` — speak arbitrary text
-- `/speak-file <path>` — speak the contents of a file
-- `/speak-stop` — halt playback
-- **Stop hook** — auto-reads every Claude response (toggle via `CLAUDE_SPEAK=0`)
+No copying, no clicking — just type, send, listen. Hands-free Claude Code while you cook, walk, or stare at the wall.
+
+## What you get
+
+- **Auto-read Stop hook** — speaks every Claude response as soon as it finishes generating. The whole point of this plugin.
+- **Markdown stripping** — code fences, bullets, tables, asterisks, links: all stripped before TTS so you hear prose, not punctuation.
+- **Toggle off without uninstalling** — `export CLAUDE_SPEAK=0` in any session.
 
 ## Prerequisites
 
 1. **macOS 14+** (Sonoma or later)
-2. **SpeakIt.app** installed and running — `brew install Atemndobs/SpeakIt/speakit` or build from source at [github.com/Atemndobs/SpeakIt](https://github.com/Atemndobs/SpeakIt)
-3. **Claude Code** with plugin support
+2. **SpeakIt.app** installed and running:
+   ```bash
+   brew tap Atemndobs/speakit https://github.com/Atemndobs/SpeakIt
+   brew install --cask speakit
+   open -a SpeakIt
+   ```
+3. **Claude Code**
 
 ## Install
 
 ```
 /plugin marketplace add Atemndobs/SpeakIt
 /plugin install claude-speak
+/reload-plugins
 ```
 
-That registers the slash commands and the Stop hook. SpeakIt.app needs to be running for any of it to do anything.
+That's it. The next response Claude generates will be read aloud.
+
+## How it works
+
+A Stop hook fires when Claude finishes a turn. It reads the last assistant message from your Claude Code transcript, strips markdown (code fences, headers, bullets, bold, italic, links, tables), URL-encodes the plain text, and opens `speakit://speak?text=...` to hand it to SpeakIt.
+
+No network, no API keys, no data leaves your Mac.
 
 ## Toggle auto-read
 
-The Stop hook is on by default. To silence it for a session:
-
+The hook fires every turn. Silence it for a session:
 ```bash
 export CLAUDE_SPEAK=0
 ```
 
-Or remove the plugin entirely with `/plugin uninstall claude-speak`.
+Or remove it entirely with `/plugin uninstall claude-speak`.
 
-## How it works
+## Minor utilities
 
-Everything is a thin wrapper around SpeakIt's `speakit://` URL scheme. The Stop hook reads the last assistant message from your Claude Code transcript, strips markdown so the voice doesn't say "asterisk asterisk", URL-encodes the text, and opens `speakit://speak?text=...`. The slash commands do the same for ad-hoc text or files.
+Three slash commands are bundled but you'll rarely use them — the Stop hook covers the main case. They exist for the edge cases:
 
-No network, no API keys, no data leaves your Mac.
+- `/speak <text>` — speak arbitrary text. Useful if you want SpeakIt to say something *outside* of a Claude response.
+- `/speak-file <path>` — read a file aloud. Or just select-all in any editor and hit ⌃⌘S, same thing.
+- `/speak-stop` — halt playback mid-sentence. Also achievable by clicking the floating bubble or menu bar dropdown.
+
+## Beyond the plugin
+
+SpeakIt does more than read Claude Code responses:
+
+- **⌃⌘S** anywhere on macOS — speak the current selection
+- **Menu bar → "Speak copies from Claude"** — speaks whatever you copy from the Claude *desktop* app
+- **Chrome extension** — adds a speaker button next to Copy on claude.ai / claude.com
+
+See the [main README](https://github.com/Atemndobs/SpeakIt) for those.
 
 ## Troubleshooting
 
-- **Nothing happens** — confirm SpeakIt.app is running. Try `open "speakit://speak?text=hello"` in Terminal.
-- **It speaks the markdown literally** — open an issue with a sample of the response that broke the stripper.
-- **Long responses get cut off** — macOS has a URL-length limit (~64KB). For huge replies, prefer `/speak-file` against a saved transcript.
+- **Nothing happens** — confirm SpeakIt.app is running (look for the menu bar icon). Test directly with `open "speakit://speak?text=hello"` in Terminal.
+- **It speaks markdown literally** — open an issue with a sample of the response that broke the stripper.
+- **Long responses get cut off** — macOS URL-length limit (~64KB). For huge replies, save and use `/speak-file`.
+- **Plugin commands say "Unknown skill"** — run `/reload-plugins` or restart your Claude Code session.
 
 ## License
 
