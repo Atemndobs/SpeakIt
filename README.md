@@ -6,11 +6,11 @@ System-wide macOS text-to-speech menu-bar app. Hit a hotkey, hear the current se
 
 ```bash
 brew tap Atemndobs/speakit https://github.com/Atemndobs/SpeakIt
-brew install speakit
-open ~/Applications/SpeakIt.app   # grant Accessibility, relaunch
+brew install --cask speakit
+open -a SpeakIt   # grant Accessibility, relaunch
 ```
 
-Or build from source — see [Run from source](#run-dev--hotkey--bubble-only-no-services-menu) below.
+Pre-built `.app`, no Xcode required. Or build from source — see [Run from source](#run-dev--hotkey--bubble-only-no-services-menu) below.
 
 ## Claude Code integration
 
