@@ -1,0 +1,21 @@
+{
+  "name": "speakit",
+  "owner": {
+    "name": "Atemndobs",
+    "url": "https://github.com/Atemndobs"
+  },
+  "metadata": {
+    "description": "SpeakIt plugins for Claude Code",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-speak",
+      "source": "./claude-speak",
+      "description": "Hear Claude Code responses aloud via SpeakIt.app — slash commands plus an optional Stop hook for auto-read.",
+      "version": "0.1.0",
+      "category": "accessibility",
+      "keywords": ["tts", "speech", "macos", "speakit"]
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# SpeakIt CLI — manage the menu-bar app from the terminal.
+#
+# Resolve the repo root from the symlink target so this script keeps working
+# after `speakit install-cli` symlinks it into /opt/homebrew/bin.
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+APP_PATH="${HOME}/Applications/SpeakIt.app"
+
+usage() {
+  cat <<EOF
+speakit — control the SpeakIt menu-bar app
+
+Usage:
+  speakit start          Run from terminal in dev mode (inherits Warp's perms; prints logs)
+  speakit open           Launch the installed .app bundle (no terminal output)
+  speakit stop           Kill all running SpeakIt processes
+  speakit build          Rebuild release + reinstall ${APP_PATH/${HOME}/~}
+  speakit status         Show running PIDs and bundle path
+  speakit logs           Tail unified-log output for SpeakIt
+  speakit show           Reveal ${APP_PATH/${HOME}/~} in Finder
+  speakit dock           Add SpeakIt to the Dock
+  speakit install-cli    Symlink this script into /opt/homebrew/bin/speakit
+  speakit setup-signing  One-time: create stable code-signing identity so TCC perms persist
+  speakit help           Show this message
+EOF
+}
+
+cmd_start() {
+  cmd_stop >/dev/null 2>&1 || true
+  [[ -x "${APP_PATH}/Contents/MacOS/SpeakIt" ]] || cmd_build
+  echo "→ running ${APP_PATH}/Contents/MacOS/SpeakIt (Ctrl+C to quit)"
+  exec "${APP_PATH}/Contents/MacOS/SpeakIt"
+}
+
+cmd_open() {
+  cmd_stop >/dev/null 2>&1 || true
+  [[ -d "${APP_PATH}" ]] || cmd_build
+  open "${APP_PATH}"
+  echo "→ launched ${APP_PATH}"
+}
+
+cmd_stop() {
+  if pkill -9 -f SpeakIt 2>/dev/null; then
+    echo "→ stopped"
+  else
+    echo "→ nothing to stop"
+  fi
+}
+
+cmd_build() {
+  echo "→ building & installing…"
+  "${REPO_ROOT}/scripts/build-app.sh"
+}
+
+cmd_status() {
+  echo "Bundle: ${APP_PATH}"
+  if pgrep -lf SpeakIt >/dev/null; then
+    echo "Running:"
+    pgrep -lf SpeakIt
+  else
+    echo "Not running."
+  fi
+}
+
+cmd_logs() {
+  echo "→ streaming log (Ctrl+C to stop)…"
+  log stream --predicate 'process == "SpeakIt"' --info
+}
+
+cmd_show() {
+  open -R "${APP_PATH}"
+}
+
+cmd_dock() {
+  [[ -d "${APP_PATH}" ]] || { echo "${APP_PATH} not found. Run: speakit build"; exit 1; }
+  defaults write com.apple.dock persistent-apps -array-add \
+    "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>${APP_PATH}</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+  killall Dock
+  echo "→ added to Dock"
+}
+
+cmd_install_cli() {
+  local target=""
+  for candidate in /opt/homebrew/bin /usr/local/bin "${HOME}/.local/bin"; do
+    if [[ -d "$candidate" && -w "$candidate" ]]; then
+      target="$candidate/speakit"
+      break
+    fi
+  done
+  if [[ -z "$target" ]]; then
+    echo "No writable bin dir found in /opt/homebrew/bin, /usr/local/bin, ~/.local/bin"
+    echo "Try: sudo ln -sf '$SCRIPT_PATH' /usr/local/bin/speakit"
+    exit 1
+  fi
+  ln -sf "$SCRIPT_PATH" "$target"
+  echo "→ symlinked to $target"
+  echo "Verify with: which speakit"
+}
+
+case "${1:-help}" in
+  start)        cmd_start ;;
+  open)         cmd_open ;;
+  stop)         cmd_stop ;;
+  build)        cmd_build ;;
+  status)       cmd_status ;;
+  logs)         cmd_logs ;;
+  show)         cmd_show ;;
+  dock)         cmd_dock ;;
+  install-cli)  cmd_install_cli ;;
+  setup-signing) "${REPO_ROOT}/scripts/setup-signing.sh" ;;
+  help|-h|--help) usage ;;
+  *)            usage; exit 1 ;;
+esac

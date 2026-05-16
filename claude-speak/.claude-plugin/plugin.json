@@ -1,0 +1,23 @@
+{
+  "name": "claude-speak",
+  "version": "0.1.0",
+  "description": "Hear Claude Code responses aloud via SpeakIt.app. Slash commands for ad-hoc TTS plus an optional Stop hook that reads every assistant turn.",
+  "author": {
+    "name": "Atemndobs"
+  },
+  "homepage": "https://github.com/Atemndobs/SpeakIt",
+  "keywords": ["tts", "speech", "accessibility", "macos", "speakit"],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/speakit-stop.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
