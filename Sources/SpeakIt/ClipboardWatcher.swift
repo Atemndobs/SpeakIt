@@ -67,7 +67,28 @@ final class ClipboardWatcher {
     /// Strip common markdown syntax so TTS doesn't say "asterisk asterisk".
     /// Mirrors the Python stripper used by the Claude Code Stop hook.
     static func stripMarkdown(_ input: String) -> String {
-        var t = input
+        // Tables get a line-based pass first (regex with lambda replacement
+        // isn't ergonomic in NSRegularExpression): drop alignment rows, flatten
+        // body rows into comma-separated text so TTS reads them as prose.
+        let separatorRow = try? NSRegularExpression(
+            pattern: #"^[ \t]*\|?[ \t|:\-]*-{2,}[ \t|:\-]*\|?[ \t]*$"#
+        )
+        let bodyRow = try? NSRegularExpression(
+            pattern: #"^[ \t]*\|(.+?)\|[ \t]*$"#
+        )
+        let preprocessed = input.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            let s = String(line)
+            let range = NSRange(s.startIndex..., in: s)
+            if separatorRow?.firstMatch(in: s, range: range) != nil { return "" }
+            if let m = bodyRow?.firstMatch(in: s, range: range), m.numberOfRanges > 1,
+               let inner = Range(m.range(at: 1), in: s) {
+                let cells = s[inner].split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                return cells.filter { !$0.isEmpty }.joined(separator: ", ")
+            }
+            return s
+        }.joined(separator: "\n")
+
+        var t = preprocessed
         let passes: [(String, String, NSRegularExpression.Options)] = [
             (#"```[\s\S]*?```"#, "", []),                     // fenced code blocks
             (#"`([^`]*)`"#, "$1", []),                        // inline code

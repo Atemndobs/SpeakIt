@@ -26,6 +26,15 @@ t = re.sub(r"```.*?```", "", t, flags=re.S)            # fenced code blocks
 t = re.sub(r"`([^`]*)`", r"\1", t)                      # inline code
 t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)              # images
 t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)          # links → text
+# Tables: drop alignment row, flatten body rows into comma-separated text.
+# Use [ \t|:\-] (NOT \s) in the character class so the match doesn't cross newlines.
+t = re.sub(r"^[ \t]*\|?[ \t|:\-]*-{2,}[ \t|:\-]*\|?[ \t]*$", "", t, flags=re.M)
+t = re.sub(
+    r"^[ \t]*\|(.+?)\|[ \t]*$",
+    lambda m: ", ".join(c.strip() for c in m.group(1).split("|") if c.strip()),
+    t,
+    flags=re.M,
+)
 t = re.sub(r"^\s{0,3}#{1,6}\s+", "", t, flags=re.M)     # headers
 t = re.sub(r"^\s{0,3}>\s?", "", t, flags=re.M)          # blockquotes
 t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.M)          # bullets
