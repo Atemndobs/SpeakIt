@@ -8,8 +8,19 @@ cask "speakit" do
   homepage "https://github.com/Atemndobs/SpeakIt"
 
   depends_on macos: ">= :sonoma"
+  depends_on formula: "pipx"
 
   app "SpeakIt.app"
+
+  # Install edge-tts via pipx so the Microsoft Edge Neural voices work
+  # out of the box. Non-fatal if it's already installed or pipx fails —
+  # SpeakIt falls back to the offline Apple Speech engine either way.
+  postflight do
+    pipx = "#{HOMEBREW_PREFIX}/bin/pipx"
+    if File.executable?(pipx)
+      system_command pipx, args: ["install", "edge-tts"], must_succeed: false
+    end
+  end
 
   zap trash: [
     "~/Library/Preferences/com.atem.SpeakIt.plist",
@@ -23,8 +34,9 @@ cask "speakit" do
 
     Grant Accessibility permission when prompted, then relaunch once.
 
-    Optional: install Edge TTS for higher-quality voices:
-      brew install pipx && pipx install edge-tts
+    Edge TTS (high-quality neural voices) was installed automatically via pipx.
+    To upgrade later:
+      pipx upgrade edge-tts
 
     Claude Code integration: install the companion plugin
       /plugin marketplace add Atemndobs/SpeakIt
