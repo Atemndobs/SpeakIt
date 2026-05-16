@@ -11,8 +11,8 @@ CASK="${REPO_ROOT}/Casks/speakit.rb"
 
 cd "${REPO_ROOT}"
 
-echo "› Building .app..."
-./scripts/build-app.sh
+echo "› Building .app (v${VERSION})..."
+SPEAKIT_VERSION="${VERSION}" ./scripts/build-app.sh
 
 echo "› Zipping bundle → ${ZIP}"
 rm -f "${ZIP}"
