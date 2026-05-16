@@ -27,7 +27,7 @@ t = re.sub(r"`([^`]*)`", r"\1", t)                      # inline code
 t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)              # images
 t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)          # links → text
 # Tables: drop alignment row, flatten body rows into comma-separated text.
-# Use [ \t|:\-] (NOT \s) in the character class so the match doesn't cross newlines.
+# Use [ \t|:-] (NOT \s) in the char class so matches stay within one line.
 t = re.sub(r"^[ \t]*\|?[ \t|:\-]*-{2,}[ \t|:\-]*\|?[ \t]*$", "", t, flags=re.M)
 t = re.sub(
     r"^[ \t]*\|(.+?)\|[ \t]*$",
