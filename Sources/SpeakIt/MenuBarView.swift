@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @ObservedObject private var bubble = BubbleWindow.shared
     @ObservedObject private var loginItem = LoginItem.shared
     @ObservedObject private var server = LocalFileServer.shared
+    @ObservedObject private var llm = LLMSettings.shared
     @AppStorage(HoverSpeakButton.autoShowKey) private var autoShowOnSelection: Bool = false
     @AppStorage(ClipboardWatcher.Keys.enabled) private var speakOnCopy: Bool = false
 
@@ -101,6 +102,10 @@ struct MenuBarView: View {
             Divider()
 
             LocalServerSection(server: server)
+
+            Divider()
+
+            ReaderAISection(llm: llm)
 
             Divider()
 
@@ -212,6 +217,60 @@ private struct LocalServerSection: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct ReaderAISection: View {
+    @ObservedObject var llm: LLMSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Reader AI search").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if llm.enabled {
+                    Circle().fill(.green).frame(width: 6, height: 6)
+                }
+            }
+
+            Toggle("Enable Ask AI in reader", isOn: $llm.enabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+            if llm.enabled {
+                Picker("Provider", selection: $llm.provider) {
+                    ForEach(LLMProvider.allCases) { p in
+                        Text(p.label).tag(p)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .onChange(of: llm.provider) { _, _ in llm.applyProviderDefaults() }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Base URL").font(.caption2).foregroundStyle(.secondary)
+                    TextField("https://…", text: $llm.baseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Model").font(.caption2).foregroundStyle(.secondary)
+                    TextField("model name", text: $llm.model)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("API key (stored in Keychain)").font(.caption2).foregroundStyle(.secondary)
+                    SecureField(llm.provider == .ollama ? "optional" : "required", text: $llm.apiKey)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                }
             }
         }
     }
