@@ -220,6 +220,73 @@ final class LocalFileServer: ObservableObject {
             _CHUNK_TARGET_CHARS = 600
             _MAX_WORKERS = 4
 
+            # Directories never worth indexing/searching: dependency trees, build
+            # output, VCS internals. Shares are often whole dev repos, so without
+            # this the walk drags through tens of thousands of node_modules docs
+            # and search of a unique term takes minutes. (Dot-dirs are pruned too.)
+            _IGNORE_DIRS = {
+                'node_modules', 'bower_components', 'vendor', 'venv', '.venv', 'env',
+                '__pycache__', '.git', '.hg', '.svn', 'dist', 'build', 'out',
+                '.next', '.nuxt', '.svelte-kit', '.turbo', '.cache', '.parcel-cache',
+                'target', 'Pods', 'Carthage', '.gradle', '.idea', '.vscode',
+                'coverage', '.pytest_cache', '.mypy_cache', '.tox', '.terraform',
+                'DerivedData', '.build', '.swiftpm', 'site-packages',
+            }
+
+            # ---- Search content cache (mtime-validated) -----------------------
+            # _do_search() used to re-read every markdown file from disk on every
+            # keystroke, which made search crawl on large note trees (worst case:
+            # a query that matches nothing reads every file in full). Cache the
+            # lowercased full text keyed by (mtime, size) so repeated searches
+            # reuse memory instead of hammering the disk. We store one blob (not a
+            # line list) so a no-match query is a single fast substring check per
+            # file; matched files are split lazily to recover line numbers.
+            _SEARCH_CACHE = {}            # full_path -> ((mtime, size), low_text)
+            _SEARCH_CACHE_LOCK = threading.Lock()
+            _SEARCH_CACHE_MAX = 20000     # cap entries to bound memory use
+
+            def _cached_low(full):
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    return None
+                sig = (st.st_mtime, st.st_size)
+                with _SEARCH_CACHE_LOCK:
+                    hit = _SEARCH_CACHE.get(full)
+                    if hit is not None and hit[0] == sig:
+                        return hit[1]
+                try:
+                    with open(full, 'r', encoding='utf-8', errors='replace') as f:
+                        low = f.read().lower()
+                except Exception:
+                    return None
+                with _SEARCH_CACHE_LOCK:
+                    if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
+                        _SEARCH_CACHE.clear()
+                    _SEARCH_CACHE[full] = (sig, low)
+                return low
+
+            def _warm_search_cache():
+                # Pre-read markdown files in the background so the first search is
+                # fast too, not just repeats. Best-effort; failures are ignored.
+                try:
+                    shares = sorted(os.listdir(ROOT))
+                except OSError:
+                    return
+                for sh in shares:
+                    if sh.startswith('.'): continue
+                    base = os.path.join(ROOT, sh)
+                    for root, dirs, files in os.walk(base, followlinks=True):
+                        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in _IGNORE_DIRS]
+                        for fn in files:
+                            if fn.startswith('.') or not fn.lower().endswith(MD_EXTS):
+                                continue
+                            with _SEARCH_CACHE_LOCK:
+                                full_count = len(_SEARCH_CACHE)
+                            if full_count >= _SEARCH_CACHE_MAX:
+                                return
+                            _cached_low(os.path.join(root, fn))
+
             def _split_for_tts(text):
                 text = text.replace('\\r\\n', '\\n').replace('\\r', '\\n').strip()
                 if not text: return []
@@ -252,6 +319,49 @@ final class LocalFileServer: ObservableObject {
                         for i in range(0, len(c), _CHUNK_TARGET_CHARS):
                             final.append(c[i:i + _CHUNK_TARGET_CHARS])
                 return final
+
+            def _live_voice():
+                # The env var SPEAKIT_EDGE_TTS_VOICE is captured once at server
+                # launch, so it goes stale the moment the user picks a different
+                # voice in the menu bar. Read the live preference per request via
+                # `defaults read` so downloads always use the currently selected
+                # voice. Falls back to the launch-time env var, then a default.
+                bundle_id = os.environ.get('SPEAKIT_BUNDLE_ID', 'com.atem.SpeakIt')
+                try:
+                    out = subprocess.run(
+                        ['defaults', 'read', bundle_id, 'SpeakIt.voice.edge-tts'],
+                        capture_output=True, timeout=5, text=True,
+                    )
+                    v = out.stdout.strip()
+                    if out.returncode == 0 and v:
+                        return v
+                except Exception:
+                    pass
+                return os.environ.get('SPEAKIT_EDGE_TTS_VOICE', '') or 'en-GB-SoniaNeural'
+
+            def _live_rate():
+                # Like _live_voice(): read the current speech-rate preference per
+                # request so downloads match the menu's Speed slider. The stored
+                # value is an AVSpeechUtterance-style float (0.0-1.0, default 0.5);
+                # convert to an edge-tts percentage exactly as EdgeTTSProvider does:
+                #   pct = clamp(round((rate - 0.5) * 200), -50, 100)
+                bundle_id = os.environ.get('SPEAKIT_BUNDLE_ID', 'com.atem.SpeakIt')
+                f = None
+                try:
+                    out = subprocess.run(
+                        ['defaults', 'read', bundle_id, 'SpeakIt.rate'],
+                        capture_output=True, timeout=5, text=True,
+                    )
+                    if out.returncode == 0 and out.stdout.strip():
+                        f = float(out.stdout.strip())
+                except Exception:
+                    f = None
+                if f is None:
+                    env = os.environ.get('SPEAKIT_EDGE_TTS_RATE', '').strip()
+                    return env or '+0%'
+                pct = int(round((f - 0.5) * 200))
+                pct = max(-50, min(100, pct))
+                return ('+%d%%' % pct) if pct >= 0 else ('%d%%' % pct)
 
             def _tts_render_chunk(text, voice, rate, bin_path):
                 tmp = tempfile.NamedTemporaryFile(prefix='speakit-c-', suffix='.mp3', delete=False)
@@ -1028,7 +1138,7 @@ final class LocalFileServer: ObservableObject {
                         if sh.startswith('.'): continue
                         base = os.path.join(ROOT, sh)
                         for root, dirs, files in os.walk(base, followlinks=True):
-                            dirs[:] = [d for d in dirs if not d.startswith('.')]
+                            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in _IGNORE_DIRS]
                             for fn in files:
                                 if fn.startswith('.'): continue
                                 if fn.lower().endswith(MD_EXTS):
@@ -1043,7 +1153,7 @@ final class LocalFileServer: ObservableObject {
                     name_hits = []
                     body_hits = []
                     MAX_RESULTS = 50
-                    MAX_FILES = 4000
+                    MAX_FILES = 20000
                     stats = {'shares': [], 'files_seen': 0, 'files_scanned': 0}
 
                     # First pass: filename/path matches across every share (any extension).
@@ -1057,7 +1167,7 @@ final class LocalFileServer: ObservableObject {
                             stats['shares'].append(sh)
                             base = os.path.join(ROOT, sh)
                             for root, dirs, files in os.walk(base, followlinks=True):
-                                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in _IGNORE_DIRS]
                                 rel_dir = '/' + os.path.relpath(root, ROOT).replace(os.sep, '/')
                                 # Also surface matching directories.
                                 def _path_match(s):
@@ -1091,20 +1201,22 @@ final class LocalFileServer: ObservableObject {
                         scanned += 1
                         if scanned > MAX_FILES:
                             continue
-                        try:
-                            with open(full, 'r', encoding='utf-8', errors='replace') as f:
-                                for i, line in enumerate(f, 1):
-                                    low = line.lower()
-                                    if needle in low or (tokens and all(t in low for t in tokens)):
-                                        body_hits.append({
-                                            'path': rel,
-                                            'line': i,
-                                            'snippet': line.strip()[:240],
-                                            'kind': 'content',
-                                        })
-                                        if len(body_hits) >= MAX_RESULTS: break
-                        except Exception:
+                        low_blob = _cached_low(full)
+                        if low_blob is None:
                             continue
+                        # Cheap whole-file gate: only split into lines (to recover
+                        # line numbers/snippets) when the file can actually match.
+                        if not (needle in low_blob or (tokens and all(t in low_blob for t in tokens))):
+                            continue
+                        for i, line in enumerate(low_blob.split('\\n'), 1):
+                            if needle in line or (tokens and all(t in line for t in tokens)):
+                                body_hits.append({
+                                    'path': rel,
+                                    'line': i,
+                                    'snippet': line.strip()[:240],
+                                    'kind': 'content',
+                                })
+                                if len(body_hits) >= MAX_RESULTS: break
                         if len(name_hits) + len(body_hits) >= MAX_RESULTS:
                             break
 
@@ -1121,28 +1233,34 @@ final class LocalFileServer: ObservableObject {
 
                     needle = q.lower()
                     tokens = [t for t in needle.split() if len(t) >= 3]
-                    picks = []
                     seen = set()
                     MAX_DOCS = 8
                     MAX_CHARS = 3500
+                    # Score every doc off the cached (lowercased) line list — no
+                    # disk reads on warm cache — then read full text for only the
+                    # handful that win, so the LLM still gets original-case context.
+                    scored = []
                     for fpath in self._iter_md_files():
                         if fpath in seen: continue
+                        seen.add(fpath)
+                        low = _cached_low(fpath)
+                        if low is None: continue
+                        score = 0
+                        if needle in low: score += 5
+                        for t in tokens:
+                            if t in low: score += 1
+                        if score > 0:
+                            scored.append((score, fpath))
+                    scored.sort(key=lambda x: -x[0])
+                    picks = []
+                    for score, fpath in scored[:MAX_DOCS]:
                         try:
                             with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
                                 txt = f.read()
                         except Exception:
                             continue
-                        low = txt.lower()
-                        score = 0
-                        if needle in low: score += 5
-                        for t in tokens:
-                            if t in low: score += 1
-                        if score <= 0: continue
                         rel = '/' + os.path.relpath(fpath, ROOT).replace(os.sep, '/')
                         picks.append((score, rel, txt[:MAX_CHARS]))
-                        seen.add(fpath)
-                    picks.sort(key=lambda x: -x[0])
-                    picks = picks[:MAX_DOCS]
 
                     if not picks:
                         return self._json({'answer': 'No matching documents were found for that query.',
@@ -1206,8 +1324,8 @@ final class LocalFileServer: ObservableObject {
                         return self._json({'error': 'empty text'}, status=400)
                     if len(text) > _MAX_TEXT_CHARS:
                         text = text[:_MAX_TEXT_CHARS]
-                    voice = data.get('voice') or os.environ.get('SPEAKIT_EDGE_TTS_VOICE', '') or 'en-GB-SoniaNeural'
-                    rate = data.get('rate') or '+0%'
+                    voice = data.get('voice') or _live_voice()
+                    rate = data.get('rate') or _live_rate()
                     filename = (data.get('filename') or 'speakit').strip() or 'speakit'
                     filename = ''.join(c for c in filename if c.isalnum() or c in '-_') or 'speakit'
                     bin_path = os.environ.get('SPEAKIT_EDGE_TTS_BIN', '')
@@ -1449,6 +1567,7 @@ final class LocalFileServer: ObservableObject {
             ThreadingHTTPServer.allow_reuse_address = True
             with ThreadingHTTPServer(('\(bindHost)', \(port)), handler) as httpd:
                 sys.stderr.write("SpeakIt server on http://\(bindHost):\(port) (root=%s)\\n" % ROOT)
+                threading.Thread(target=_warm_search_cache, daemon=True).start()
                 httpd.serve_forever()
             """,
             rootURL.path
@@ -1465,6 +1584,14 @@ final class LocalFileServer: ObservableObject {
         env["SPEAKIT_EDGE_TTS_BIN"] = EdgeTTSProvider.binaryPath ?? ""
         env["SPEAKIT_EDGE_TTS_VOICE"] = UserDefaults.standard.string(forKey: "SpeakIt.voice.edge-tts")
             ?? "en-GB-SoniaNeural"
+        if UserDefaults.standard.object(forKey: "SpeakIt.rate") != nil {
+            let r = Float(UserDefaults.standard.double(forKey: "SpeakIt.rate"))
+            let pct = max(-50, min(100, Int(((r - 0.5) * 200).rounded())))
+            env["SPEAKIT_EDGE_TTS_RATE"] = pct >= 0 ? "+\(pct)%" : "\(pct)%"
+        }
+        // Bundle id so the Python server can read the *live* voice preference
+        // per request (the env var above is only the launch-time snapshot).
+        env["SPEAKIT_BUNDLE_ID"] = Bundle.main.bundleIdentifier ?? "com.atem.SpeakIt"
         proc.environment = env
 
         // Capture stderr to a log so crashes are diagnosable.

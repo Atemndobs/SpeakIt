@@ -51,6 +51,12 @@ final class EdgeTTSProvider: NSObject, TTSProvider {
         TTSVoice(id: "en-US-DavisNeural",              name: "Davis",                 language: "en-US", quality: "Neural"),
         TTSVoice(id: "en-GB-SoniaNeural",              name: "Sonia (UK)",            language: "en-GB", quality: "Neural"),
         TTSVoice(id: "en-GB-RyanNeural",               name: "Ryan (UK)",             language: "en-GB", quality: "Neural"),
+        TTSVoice(id: "de-DE-SeraphinaMultilingualNeural", name: "Seraphina (DE, Multilingual)", language: "de-DE", quality: "Neural"),
+        TTSVoice(id: "de-DE-FlorianMultilingualNeural",   name: "Florian (DE, Multilingual)",   language: "de-DE", quality: "Neural"),
+        TTSVoice(id: "de-DE-KatjaNeural",              name: "Katja (DE)",            language: "de-DE", quality: "Neural"),
+        TTSVoice(id: "de-DE-ConradNeural",             name: "Conrad (DE)",           language: "de-DE", quality: "Neural"),
+        TTSVoice(id: "de-DE-AmalaNeural",              name: "Amala (DE)",            language: "de-DE", quality: "Neural"),
+        TTSVoice(id: "de-DE-KillianNeural",            name: "Killian (DE)",          language: "de-DE", quality: "Neural"),
     ]
 
     var isSpeaking: Bool { _isSpeaking }
