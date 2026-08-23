@@ -1,5 +1,7 @@
 import SwiftUI
 import AVFoundation
+import AppKit
+import NaturalLanguage
 
 @MainActor
 final class TTSEngine: ObservableObject {
@@ -20,10 +22,18 @@ final class TTSEngine: ObservableObject {
     @Published var progress: Double = 0
     @Published var currentText: String = ""
     @Published var highlightRange: NSRange?
+    /// Filesystem path of what's being read (a file or its project folder), if a
+    /// caller supplied one. Drives the bubble's "open in Finder" control. nil for
+    /// ad-hoc reads (selection, clipboard) that have no source on disk.
+    @Published var currentSource: String?
+    /// Human-readable label for what's being read (project / plan / file name, or
+    /// a snippet of the text when nothing better is known). Shown in the bubble so
+    /// you can tell at a glance which chat, page, or file is talking.
+    @Published var currentTitle: String = ""
 
     // Natural-break navigation: text is read as one continuous utterance; skip
-    // buttons jump the cursor to the next/previous sentence-or-paragraph break.
-    private var breakpoints: [Int] = []  // character offsets (UTF16) into currentText
+    // buttons jump to sentence or non-empty line starts.
+    private var navigationOffsets: [Int] = []  // character offsets (UTF16) into currentText
 
     private enum Keys {
         static let activeProviderId = "SpeakIt.activeProviderId"
@@ -112,35 +122,74 @@ final class TTSEngine: ObservableObject {
             ?? voices.first?.id
     }
 
-    func speak(_ text: String) {
+    func speak(_ text: String, source: String? = nil, title: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let provider = activeProvider else { return }
         let voice = provider.availableVoices.first { $0.id == selectedVoiceId }
         currentText = trimmed
-        breakpoints = Self.findBreakpoints(in: trimmed)
+        let src = source.flatMap { $0.isEmpty ? nil : $0 }
+        currentSource = src
+        currentTitle = Self.resolveTitle(title: title, source: src, text: trimmed)
+        navigationOffsets = Self.findNavigationOffsets(in: trimmed)
         highlightRange = nil
         provider.speak(trimmed, voice: voice, rate: rate)
         BubbleWindow.shared.show()
     }
 
+    /// Open `currentSource` in the SpeakIt web reader (browser) — a folder shows
+    /// its listing, a file opens rendered. Shares it and starts the server if
+    /// needed.
+    func openSource() {
+        guard let path = currentSource else { return }
+        LocalFileServer.shared.openInReader(path: path)
+    }
+
+    /// Choose the player's display label. An explicit `title` (project / page name
+    /// from the caller) wins; otherwise fall back to the source path's last
+    /// component (file or folder name); otherwise a trimmed snippet of the spoken
+    /// text so ad-hoc selections still show something recognizable.
+    private static func resolveTitle(title: String?, source: String?, text: String) -> String {
+        if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+            return t
+        }
+        if let source, !source.isEmpty {
+            let name = (source as NSString).lastPathComponent
+            if !name.isEmpty { return name }
+        }
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        let snippet = firstLine.trimmingCharacters(in: .whitespaces)
+        guard !snippet.isEmpty else { return "Speaking" }
+        let limit = 48
+        if snippet.count > limit {
+            let cut = snippet.index(snippet.startIndex, offsetBy: limit)
+            return String(snippet[..<cut]).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return snippet
+    }
+
     /// Jump the cursor to the next natural break (sentence / paragraph).
     /// The current utterance is stopped and the remainder restarted from there.
     func nextChunk() {
-        guard !currentText.isEmpty, !breakpoints.isEmpty else { return }
+        guard !currentText.isEmpty, !navigationOffsets.isEmpty else { return }
         let here = currentOffset()
-        guard let target = breakpoints.first(where: { $0 > here }) else {
+        guard let target = navigationOffsets.first(where: { $0 > here + 1 }) else {
             stop(); return
         }
         seekToOffset(target)
     }
 
     func previousChunk() {
-        guard !currentText.isEmpty, !breakpoints.isEmpty else { return }
+        guard !currentText.isEmpty, !navigationOffsets.isEmpty else { return }
         let here = currentOffset()
-        // Step back to the breakpoint *before* the current one, so repeated
-        // presses move backwards instead of bouncing on the nearest boundary.
-        let priors = breakpoints.filter { $0 < here - 2 }
-        seekToOffset(priors.last ?? 0)
+        let idx = currentNavigationIndex(for: here)
+        let currentStart = navigationOffsets[idx]
+        let target: Int
+        if here - currentStart > 2 {
+            target = currentStart
+        } else {
+            target = navigationOffsets[max(0, idx - 1)]
+        }
+        seekToOffset(target)
     }
 
     private func currentOffset() -> Int {
@@ -154,34 +203,49 @@ final class TTSEngine: ObservableObject {
         let total = (currentText as NSString).length
         guard total > 0 else { return }
         let clamped = max(0, min(offset, total - 1))
-        activeProvider?.seek(to: Double(clamped) / Double(total))
+        activeProvider?.seek(toCharacterOffset: clamped)
     }
 
-    /// Natural break offsets: end of each sentence (after `.!?`) and paragraph
-    /// boundaries (newlines). Returns UTF16 character offsets into `text`.
-    private static func findBreakpoints(in text: String) -> [Int] {
-        let ns = text as NSString
-        var out: [Int] = []
-        var i = 0
-        let len = ns.length
-        while i < len {
-            let scalar = ns.character(at: i)
-            // ASCII . ! ? \n
-            if scalar == 0x2E || scalar == 0x21 || scalar == 0x3F || scalar == 0x0A {
-                // Skip any trailing whitespace so the cursor lands at the next
-                // sentence's first letter.
-                var j = i + 1
-                while j < len {
-                    let c = ns.character(at: j)
-                    if c == 0x20 || c == 0x0A || c == 0x09 { j += 1 } else { break }
-                }
-                if j < len, out.last != j { out.append(j) }
-                i = j
+    private func currentNavigationIndex(for offset: Int) -> Int {
+        var idx = 0
+        for (i, candidate) in navigationOffsets.enumerated() {
+            if candidate <= offset {
+                idx = i
             } else {
-                i += 1
+                break
             }
         }
-        return out
+        return idx
+    }
+
+    /// Natural navigation offsets: sentence starts from NaturalLanguage plus
+    /// non-empty line starts. Returns UTF16 character offsets into `text`.
+    private static func findNavigationOffsets(in text: String) -> [Int] {
+        guard !text.isEmpty else { return [] }
+        var offsets: Set<Int> = [0]
+
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            offsets.insert(NSRange(range, in: text).location)
+            return true
+        }
+
+        let ns = text as NSString
+        var lineStart = 0
+        for i in 0..<ns.length {
+            guard ns.character(at: i) == 0x0A else { continue }
+            lineStart = i + 1
+            while lineStart < ns.length {
+                let c = ns.character(at: lineStart)
+                if c == 0x20 || c == 0x09 { lineStart += 1 } else { break }
+            }
+            if lineStart < ns.length, ns.character(at: lineStart) != 0x0A {
+                offsets.insert(lineStart)
+            }
+        }
+
+        return offsets.sorted()
     }
 
     func togglePause() {

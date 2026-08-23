@@ -24,8 +24,10 @@ protocol TTSProvider: AnyObject {
     func resume()
     func stop()
     func seek(to fraction: Double)  // 0...1
+    func seek(toCharacterOffset offset: Int)
 }
 
 extension TTSProvider {
     func seek(to fraction: Double) {}  // default no-op
+    func seek(toCharacterOffset offset: Int) {}  // default no-op
 }

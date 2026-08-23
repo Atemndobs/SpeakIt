@@ -41,6 +41,7 @@ final class EdgeTTSProvider: NSObject, TTSProvider {
     }()
 
     let availableVoices: [TTSVoice] = [
+        TTSVoice(id: "en-US-AvaNeural",                name: "Ava",                   language: "en-US", quality: "Neural"),
         TTSVoice(id: "en-US-AvaMultilingualNeural",    name: "Ava (Multilingual)",    language: "en-US", quality: "Neural"),
         TTSVoice(id: "en-US-AndrewMultilingualNeural", name: "Andrew (Multilingual)", language: "en-US", quality: "Neural"),
         TTSVoice(id: "en-US-EmmaMultilingualNeural",   name: "Emma (Multilingual)",   language: "en-US", quality: "Neural"),
@@ -102,10 +103,24 @@ final class EdgeTTSProvider: NSObject, TTSProvider {
     }
 
     func seek(to fraction: Double) {
+        let total = (originalText as NSString).length
+        guard total > 0 else { return }
+        let target = max(0, min(total - 1, Int(fraction * Double(total))))
+        seek(toCharacterOffset: target)
+    }
+
+    func seek(toCharacterOffset offset: Int) {
         let n = sentences.count
         guard n > 0, (_isSpeaking || _isPaused) else { return }
-        let target = max(0, min(n - 1, Int(floor(fraction * Double(n)))))
-        let withinFraction = max(0, min(1, fraction * Double(n) - Double(target)))
+        let targetOffset = max(0, min(offset, max(0, (originalText as NSString).length - 1)))
+        let target = sentenceIndex(containing: targetOffset) ?? max(0, min(n - 1, currentIndex))
+        let withinFraction = fractionWithinSentence(offset: targetOffset, sentenceIndex: target)
+        seekToSentence(target, withinFraction: withinFraction)
+    }
+
+    private func seekToSentence(_ target: Int, withinFraction: Double = 0) {
+        let n = sentences.count
+        guard n > 0, (_isSpeaking || _isPaused) else { return }
         log("seek -> sentence \(target + 1)/\(n) within=\(String(format: "%.2f", withinFraction))")
 
         // Tear down current playback + generator
@@ -125,6 +140,12 @@ final class EdgeTTSProvider: NSObject, TTSProvider {
         currentIndex = target - 1
         _isPaused = false
         _isSpeaking = true
+        if target < sentenceRanges.count {
+            highlightRange = sentenceRanges[target]
+            progress = progressForSentence(target, withinFraction: withinFraction)
+            onHighlight?()
+            onProgress?()
+        }
         onStateChange?()
 
         // Start the target sentence immediately if it's already cached
@@ -302,17 +323,39 @@ final class EdgeTTSProvider: NSObject, TTSProvider {
     }
 
     private func tickProgress() {
-        let n = sentences.count
-        guard n > 0 else { return }
+        guard !sentences.isEmpty else { return }
         var within: Double = 0
         if let p = activePlayer, p.duration > 0 {
             within = p.currentTime / p.duration
         }
-        progress = min(1, (Double(max(currentIndex, 0)) + within) / Double(n))
+        progress = progressForSentence(max(currentIndex, 0), withinFraction: within)
         onProgress?()
     }
 
     // MARK: Helpers
+
+    private func sentenceIndex(containing offset: Int) -> Int? {
+        sentenceRanges.firstIndex { range in
+            offset >= range.location && offset < NSMaxRange(range)
+        } ?? sentenceRanges.lastIndex { range in
+            offset >= range.location
+        }
+    }
+
+    private func fractionWithinSentence(offset: Int, sentenceIndex: Int) -> Double {
+        guard sentenceIndex < sentenceRanges.count else { return 0 }
+        let range = sentenceRanges[sentenceIndex]
+        guard range.length > 0 else { return 0 }
+        return max(0, min(1, Double(offset - range.location) / Double(range.length)))
+    }
+
+    private func progressForSentence(_ sentenceIndex: Int, withinFraction: Double) -> Double {
+        let total = (originalText as NSString).length
+        guard total > 0, sentenceIndex < sentenceRanges.count else { return progress }
+        let range = sentenceRanges[sentenceIndex]
+        let absolute = Double(range.location) + Double(range.length) * max(0, min(1, withinFraction))
+        return max(0, min(1, absolute / Double(total)))
+    }
 
     private func splitSentencesWithRanges(_ text: String) -> [(String, NSRange)] {
         let tokenizer = NLTokenizer(unit: .sentence)

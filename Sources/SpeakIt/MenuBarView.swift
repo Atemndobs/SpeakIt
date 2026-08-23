@@ -10,6 +10,8 @@ struct MenuBarView: View {
     @ObservedObject private var llm = LLMSettings.shared
     @AppStorage(HoverSpeakButton.autoShowKey) private var autoShowOnSelection: Bool = false
     @AppStorage(ClipboardWatcher.Keys.enabled) private var speakOnCopy: Bool = false
+    @AppStorage(AutoSpeechSettings.Keys.claudeCodeEnabled) private var speakClaudeResponses: Bool = false
+    @AppStorage(CodexTranscriptWatcher.Keys.enabled) private var speakCodexResponses: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -92,9 +94,20 @@ struct MenuBarView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
-            Toggle("Speak copies from Claude", isOn: Binding(
+            Toggle("Speak Claude Code responses", isOn: $speakClaudeResponses)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+            Toggle("Speak copied text (Claude Desktop)", isOn: Binding(
                 get: { speakOnCopy },
                 set: { speakOnCopy = $0; ClipboardWatcher.shared.isEnabled = $0 }
+            ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+            Toggle("Speak Codex final responses", isOn: Binding(
+                get: { speakCodexResponses },
+                set: { speakCodexResponses = $0; CodexTranscriptWatcher.shared.isEnabled = $0 }
             ))
                 .toggleStyle(.switch)
                 .controlSize(.small)

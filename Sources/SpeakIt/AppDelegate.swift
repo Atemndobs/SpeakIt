@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Speak-on-copy from watched apps (Claude desktop, etc.)
         ClipboardWatcher.shared.bootstrap()
 
+        // Speak final Codex responses from rollout JSONL transcripts.
+        CodexTranscriptWatcher.shared.bootstrap()
+
         // Globe / fn single-tap → speak selection
         fnMonitor.onFnTap = {
             Task { @MainActor in
@@ -60,5 +63,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 TailscaleHelper.disableServeHTTPS()
             }
         }
+    }
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        LocalFileServer.shared.openInReader(path: filename)
+        return true
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        for filename in filenames {
+            LocalFileServer.shared.openInReader(path: filename)
+        }
+        sender.reply(toOpenOrPrint: .success)
     }
 }

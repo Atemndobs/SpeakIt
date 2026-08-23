@@ -52,7 +52,7 @@ final class AVSpeechProvider: NSObject, TTSProvider, AVSpeechSynthesizerDelegate
     func speak(_ text: String, voice: TTSVoice?, rate: Float) {
         stop()
         originalText = text
-        totalChars = text.count
+        totalChars = (text as NSString).length
         charOffset = 0
         if let vid = voice?.id {
             lastVoice = AVSpeechSynthesisVoice(identifier: vid)
@@ -82,8 +82,13 @@ final class AVSpeechProvider: NSObject, TTSProvider, AVSpeechSynthesizerDelegate
     func seek(to fraction: Double) {
         guard totalChars > 0, !originalText.isEmpty else { return }
         let target = max(0, min(totalChars - 1, Int(fraction * Double(totalChars))))
-        let startIdx = originalText.index(originalText.startIndex, offsetBy: target)
-        let remainder = String(originalText[startIdx...])
+        seek(toCharacterOffset: target)
+    }
+
+    func seek(toCharacterOffset offset: Int) {
+        guard totalChars > 0, !originalText.isEmpty else { return }
+        let target = max(0, min(offset, totalChars - 1))
+        let remainder = (originalText as NSString).substring(from: target)
         guard !remainder.isEmpty else {
             synth.stopSpeaking(at: .immediate)
             progress = 1

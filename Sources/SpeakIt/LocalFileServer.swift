@@ -768,6 +768,7 @@ final class LocalFileServer: ObservableObject {
               <button id="navBack" title="Back"><i data-lucide="arrow-left"></i></button>
               <a class="iconBtn" href="/" title="Home"><i data-lucide="house"></i></a>
               <a class="iconBtn" href="__PARENT__" title="Parent folder"><i data-lucide="arrow-up"></i></a>
+              __REVEAL_BTN__
               <span class="spacer"></span>
               <button id="selectAll" class="primary"><i data-lucide="volume-2"></i> Speak</button>
               <button id="dlAudio" title="Download as MP3"><i data-lucide="download"></i></button>
@@ -839,6 +840,19 @@ final class LocalFileServer: ObservableObject {
                 if (history.length > 1) history.back();
                 else location.href = '/';
               });
+
+              // Reveal the file's real containing folder in Finder (host Mac only).
+              const revealBtn = document.getElementById('revealFolder');
+              if (revealBtn) {
+                revealBtn.addEventListener('click', async () => {
+                  try {
+                    const r = await fetch('/_reveal?path=' + encodeURIComponent(location.pathname));
+                    if (!r.ok) throw new Error('reveal failed');
+                  } catch (e) {
+                    revealBtn.title = 'Could not open folder';
+                  }
+                });
+              }
               const SELECTOR = 'p, li, h1, h2, h3, h4, h5, h6, blockquote';
 
               function selectRange(node) {
@@ -1098,6 +1112,8 @@ final class LocalFileServer: ObservableObject {
                         return self._tts_events(qs.get('id', [''])[0])
                     if parsed.path == '/_tts/file':
                         return self._tts_file(qs.get('id', [''])[0])
+                    if parsed.path == '/_reveal':
+                        return self._do_reveal(qs.get('path', [''])[0])
                     is_md = parsed.path.lower().endswith('.md')
                     raw = qs.get('raw', ['0'])[0] == '1'
                     if is_md and not raw:
@@ -1128,6 +1144,32 @@ final class LocalFileServer: ObservableObject {
                     self.end_headers()
                     self.wfile.write(data)
                     return None
+
+                def _client_is_local(self):
+                    host = (self.client_address[0] if self.client_address else '')
+                    return host in ('127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost')
+
+                def _do_reveal(self, url_path):
+                    # Reveal the requested file's REAL location in Finder. Only the
+                    # host Mac can act on this; remote (Tailscale/LAN) clients are
+                    # refused so a phone can't pop Finder windows on the Mac.
+                    if not self._client_is_local():
+                        return self._json({'error': 'reveal is local-only'}, status=403)
+                    if not url_path:
+                        return self._json({'error': 'no path'}, status=400)
+                    try:
+                        fs_path = self.translate_path(urllib.parse.unquote(url_path))
+                        real = os.path.realpath(fs_path)
+                    except Exception:
+                        return self._json({'error': 'bad path'}, status=400)
+                    if not os.path.exists(real):
+                        return self._json({'error': 'not found'}, status=404)
+                    try:
+                        # -R reveals the file (opens its folder, file selected).
+                        subprocess.run(['/usr/bin/open', '-R', real], check=False)
+                    except Exception as e:
+                        return self._json({'error': str(e)}, status=500)
+                    return self._json({'ok': True})
 
                 def _iter_md_files(self):
                     try:
@@ -1548,12 +1590,17 @@ final class LocalFileServer: ObservableObject {
                     crumbs_html = '<span class="sep">/</span>'.join(crumbs)
 
                     ai_flag = 'true' if os.environ.get('SPEAKIT_LLM_ENABLED') == '1' else 'false'
+                    # The reveal button only works on the host Mac, so only render
+                    # it for localhost clients; remote readers don't see a dead btn.
+                    reveal_btn = ('<button id="revealFolder" title="Open containing folder in Finder">'
+                                  '<i data-lucide="folder-open"></i></button>') if self._client_is_local() else ''
                     body = (MD_TEMPLATE
                             .replace('__PALETTE_CSS__', PALETTE_CSS)
                             .replace('__PALETTE_JS__', PALETTE_JS)
                             .replace('__AI_FLAG__', ai_flag)
                             .replace('__TITLE__', html.escape(title))
                             .replace('__PARENT__', html.escape(parent))
+                            .replace('__REVEAL_BTN__', reveal_btn)
                             .replace('__CRUMBS__', crumbs_html)
                             .replace('__SRC_JSON__', json.dumps(src)))
                     data = body.encode('utf-8')
@@ -1650,6 +1697,61 @@ final class LocalFileServer: ObservableObject {
 
     func openInBrowser() {
         if let url = URL(string: rootURLString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Map a filesystem path (file or folder) to its URL in the web reader.
+    /// Auto-adds a share for it (or its parent, for a file) when none covers it,
+    /// and starts the server if needed. Always builds a localhost URL — the
+    /// caller is on this Mac. Returns nil only if the path doesn't exist.
+    func webURL(for rawPath: String) -> URL? {
+        let fm = FileManager.default
+        let canon = URL(fileURLWithPath: (rawPath as NSString).expandingTildeInPath)
+            .resolvingSymlinksInPath().path
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: canon, isDirectory: &isDir) else { return nil }
+
+        func canonical(_ p: String) -> String {
+            URL(fileURLWithPath: (p as NSString).expandingTildeInPath)
+                .resolvingSymlinksInPath().path
+        }
+        func containingShare() -> (share: Share, rel: String)? {
+            for s in shares {
+                let base = canonical(s.path)
+                if canon == base { return (s, "") }
+                let prefix = base.hasSuffix("/") ? base : base + "/"
+                if canon.hasPrefix(prefix) { return (s, String(canon.dropFirst(prefix.count))) }
+            }
+            return nil
+        }
+
+        var match = containingShare()
+        if match == nil {
+            // Share the folder itself, or a file's parent folder.
+            let target = isDir.boolValue ? canon : (canon as NSString).deletingLastPathComponent
+            addShare(URL(fileURLWithPath: target))
+            match = containingShare()
+        }
+        guard let (share, rel) = match else { return nil }
+
+        if !isRunning { start() }
+
+        var parts = [share.name]
+        if !rel.isEmpty { parts.append(contentsOf: rel.split(separator: "/").map(String.init)) }
+        let encoded = parts.map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0 }
+        var urlStr = rootURLString + encoded.joined(separator: "/")
+        if isDir.boolValue && !urlStr.hasSuffix("/") { urlStr += "/" }  // dir listing needs trailing slash
+        return URL(string: urlStr)
+    }
+
+    /// Open the given path in the web reader (browser). Starts the server first
+    /// if it wasn't running, giving the python child a beat to bind.
+    func openInReader(path: String) {
+        let wasRunning = isRunning
+        guard let url = webURL(for: path) else { return }
+        let delay: TimeInterval = wasRunning ? 0 : 0.7
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             NSWorkspace.shared.open(url)
         }
     }

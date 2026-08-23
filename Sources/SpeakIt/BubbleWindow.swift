@@ -18,8 +18,8 @@ final class BubbleWindow: ObservableObject {
     private var dragStartOrigin: NSPoint?
 
     private let minSize = NSSize(width: 56, height: 56)
-    private let barSize = NSSize(width: 360, height: 56)
-    private let transcriptSize = NSSize(width: 420, height: 280)
+    private let barSize = NSSize(width: 360, height: 78)
+    private let transcriptSize = NSSize(width: 420, height: 300)
     private let screenMargin: CGFloat = 20
     private static let positionKey = "SpeakIt.bubblePosition"
 
@@ -207,6 +207,7 @@ private struct CircleBadge: View {
         .padding(4)
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
         .contentShape(Circle())
+        .help(engine.currentTitle.isEmpty ? "SpeakIt" : "Reading: \(engine.currentTitle)")
         .onTapGesture { onExpand() }
         .simultaneousGesture(dragGesture)
         .contextMenu {
@@ -249,6 +250,23 @@ private struct ExpandedBar: View {
     @State private var scrubbing = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            SourceTitleBar(engine: engine)
+            controlRow
+                .frame(height: 56)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+        .padding(2)
+    }
+
+    private var controlRow: some View {
         HStack(spacing: 8) {
             DragGrip(window: window)
 
@@ -276,23 +294,11 @@ private struct ExpandedBar: View {
             .tint(.accentColor)
             .controlSize(.small)
 
-            HoverChip(
-                symbol: window.showTranscript ? "text.alignleft" : "text.alignleft",
-                action: { window.toggleTranscript() }
-            )
+            HoverChip(symbol: "text.alignleft", action: { window.toggleTranscript() })
             HoverChip(symbol: "minus", action: onCollapse)
             HoverChip(symbol: "xmark", action: onClose)
         }
         .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
-        .padding(2)
     }
 
     private var playPauseButton: some View {
@@ -359,7 +365,7 @@ private struct TranscriptPanel: View {
                 onCollapse: onCollapse,
                 onClose: onClose
             )
-            .frame(height: 56)
+            .frame(height: 78)
         }
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -434,6 +440,60 @@ private struct TranscriptView: View {
                 }
             }
         }
+    }
+}
+
+/// Header row above the transport controls: shows what's being read (project /
+/// page / file name) and, when a source path is known, doubles as a clickable
+/// link that opens it in the SpeakIt web reader so you can jump to what's talking.
+private struct SourceTitleBar: View {
+    @ObservedObject var engine: TTSEngine
+    @State private var hovering = false
+
+    private var hasSource: Bool { engine.currentSource != nil }
+    private var label: String { engine.currentTitle.isEmpty ? "Nothing loaded" : engine.currentTitle }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: engine.isSpeaking && !engine.isPaused ? "waveform" : "speaker.wave.2.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(titleColor)
+                .underline(hasSource && hovering)
+
+            if hasSource {
+                Image(systemName: "arrow.up.forward.square")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(hovering ? Color.accentColor : Color.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 7)
+        .padding(.bottom, 1)
+        .frame(height: 22)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { if hasSource { engine.openSource() } }
+        .help(tooltip)
+    }
+
+    private var titleColor: Color {
+        guard hasSource else { return .secondary }
+        return hovering ? .accentColor : .primary
+    }
+
+    private var tooltip: String {
+        if let src = engine.currentSource {
+            return "Open in reader: \(src)"
+        }
+        return label
     }
 }
 
