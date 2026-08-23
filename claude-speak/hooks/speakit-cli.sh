@@ -18,7 +18,9 @@ case "$cmd" in
   file)
     path="${1:-}"
     [ -f "$path" ] || { echo "file: not found: $path" >&2; exit 1; }
-    /usr/bin/open "speakit://speak?text=$(encode "$(/bin/cat "$path")")"
+    # Absolute path so SpeakIt's "open in Finder" control can reveal the file.
+    abs="$(/usr/bin/python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$path")"
+    /usr/bin/open "speakit://speak?text=$(encode "$(/bin/cat "$path")")&source=$(encode "$abs")"
     ;;
   stop|next|prev)
     /usr/bin/open "speakit://$cmd"
