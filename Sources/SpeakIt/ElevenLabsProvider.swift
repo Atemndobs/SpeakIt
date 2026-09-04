@@ -31,6 +31,9 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
     private var sentenceRanges: [NSRange] = []
     private var originalText: String = ""
     private var pendingAudio: [Int: URL] = [:]
+    /// Sentences that will never produce audio. Playback steps over these;
+    /// without them a single transient failure stalls the read forever.
+    private var failedIndices: Set<Int> = []
     private var currentIndex: Int = -1
     private var activePlayer: AVAudioPlayer?
     private var generatorTask: Task<Void, Never>?
@@ -198,6 +201,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         sentences = pairs.map { $0.0 }
         sentenceRanges = pairs.map { $0.1 }
         currentIndex = -1
+        failedIndices = []
         progress = 0
         highlightRange = nil
         lastError = nil
@@ -248,6 +252,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         sentenceRanges = []
         originalText = ""
         currentIndex = -1
+        failedIndices = []
         highlightRange = nil
         let was = _isSpeaking || _isPaused
         _isSpeaking = false
@@ -290,6 +295,10 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         // It has already been paid for, and seeking backwards over a paragraph
         // you just heard should not re-bill it.
         currentIndex = target - 1
+        // Give sentences at or after the target another chance: the generator
+        // is about to run over them again, and the failure may have been the
+        // rate limit that has since cleared.
+        failedIndices = failedIndices.filter { $0 < target }
         _isPaused = false
         _isSpeaking = true
         if target < sentenceRanges.count {
@@ -352,10 +361,17 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
                     stop()
                     return
                 }
+                // Retryable, but this pass is giving up on this sentence.
+                // Record it so playback steps over the gap rather than waiting
+                // for audio that is never coming.
+                failedIndices.insert(idx)
+                maybeStartPlayback()
             } catch {
                 lastError = error.localizedDescription
                 log("synthesis failed at sentence \(idx + 1): \(error)")
+                failedIndices.insert(idx)
                 onStateChange?()
+                maybeStartPlayback()
             }
         }
     }
@@ -364,9 +380,20 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
     private func maybeStartPlayback() {
         guard activePlayer == nil, !_isPaused else { return }
-        let nextIdx = currentIndex + 1
-        guard let url = pendingAudio.removeValue(forKey: nextIdx) else { return }
-        playIndex(nextIdx, url: url)
+        switch SentenceQueue.next(
+            after: currentIndex,
+            ready: Set(pendingAudio.keys),
+            failed: failedIndices,
+            total: sentences.count
+        ) {
+        case .play(let idx):
+            guard let url = pendingAudio.removeValue(forKey: idx) else { return }
+            playIndex(idx, url: url)
+        case .waiting:
+            return
+        case .finished:
+            if _isSpeaking { handleEnd() }
+        }
     }
 
     private func playIndex(_ idx: Int, url: URL) {
@@ -396,14 +423,9 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
     private func advance() {
         activePlayer = nil
-        if currentIndex + 1 >= sentences.count, pendingAudio.isEmpty {
-            handleEnd()
-            return
-        }
         maybeStartPlayback()
-        if activePlayer == nil, currentIndex + 1 >= sentences.count {
-            handleEnd()
-        }
+        // maybeStartPlayback ends the read itself when the queue is finished.
+        // Reaching here with no player means we are waiting on the generator.
     }
 
     private func handleEnd() {
