@@ -47,6 +47,8 @@ public struct ElevenLabsAPI: Sendable {
         case quotaExceeded
         case http(status: Int, message: String)
         case emptyAudio
+        /// A 2xx body that is not audio. Usually a JSON error served with a 200.
+        case notAudio(String)
         case malformedResponse(String)
 
         public var errorDescription: String? {
@@ -66,6 +68,8 @@ public struct ElevenLabsAPI: Sendable {
                 return "ElevenLabs returned \(status): \(message)"
             case .emptyAudio:
                 return "ElevenLabs returned no audio."
+            case .notAudio(let hint):
+                return "ElevenLabs returned something that is not audio: \(hint)"
             case .malformedResponse(let detail):
                 return "Could not read the ElevenLabs response: \(detail)"
             }
@@ -76,7 +80,9 @@ public struct ElevenLabsAPI: Sendable {
         /// retrying them just burns time while the user waits for audio.
         public var isRetryable: Bool {
             switch self {
-            case .rateLimited, .emptyAudio:
+            case .rateLimited, .emptyAudio, .notAudio:
+                // notAudio is usually a transient upstream hiccup rather than a
+                // permanent contract change, so it is worth one more attempt.
                 return true
             case .http(let status, _):
                 return status >= 500
@@ -163,6 +169,17 @@ public struct ElevenLabsAPI: Sendable {
         let (data, response) = try await session.data(for: request)
         try Self.check(response: response, body: data)
         guard !data.isEmpty else { throw APIError.emptyAudio }
+
+        // A 2xx is not a promise of audio. A JSON error body can arrive with a
+        // 200, and handing that to AVAudioPlayer fails deep in the provider,
+        // where it looks to the listener like a silently skipped sentence
+        // rather than an error. Check the bytes here, where it can be reported.
+        let contentType = (response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "Content-Type")
+        guard AudioSniffer.isAudio(data, contentType: contentType) else {
+            let hint = Self.errorMessage(from: data) ?? "response was not audio"
+            throw APIError.notAudio(hint)
+        }
         return data
     }
 

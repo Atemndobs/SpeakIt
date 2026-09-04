@@ -30,7 +30,13 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
     private var sentences: [String] = []
     private var sentenceRanges: [NSRange] = []
     private var originalText: String = ""
-    private var pendingAudio: [Int: URL] = [:]
+    /// Synthesized audio for the current read, kept until stop.
+    ///
+    /// Deliberately NOT cleared when a sentence finishes playing. Every entry
+    /// has been paid for, so seeking back over a paragraph you just heard
+    /// replays it instead of buying it again. The cost is temp-file disk for
+    /// the duration of one read, which is a few megabytes for a long article.
+    private var audioCache: [Int: URL] = [:]
     /// Sentences that will never produce audio. Playback steps over these;
     /// without them a single transient failure stalls the read forever.
     private var failedIndices: Set<Int> = []
@@ -63,6 +69,9 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
     /// play, including the 90 percent you skip. Three is enough to keep the
     /// queue full at any realistic speaking rate.
     private static let lookahead = 3
+
+    /// Bounded, because the listener waits through every delay.
+    private static let retryPolicy = RetryPolicy.default
 
     // MARK: Voices
 
@@ -220,6 +229,12 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         activePlayer?.pause()
         progressTimer?.invalidate()
         _isPaused = true
+        // Stop buying audio while paused. Previously the generator kept running
+        // until it was three sentences ahead, so pausing did not stop spending
+        // the way the comment claimed. Cancelling is safe because the cache
+        // survives, so resuming re-synthesizes nothing already bought.
+        generatorTask?.cancel()
+        generatorTask = nil
         onStateChange?()
     }
 
@@ -228,11 +243,12 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         startProgressTimer()
         _isPaused = false
         onStateChange?()
-        // The generator pauses with playback: lookahead is measured from the
-        // playing sentence, so a paused read stops spending.
-        if generatorTask == nil || generatorTask?.isCancelled == true {
+        // Restart the generator that pause() cancelled. It skips anything
+        // already in the cache, so this costs nothing for audio already bought.
+        if generatorTask == nil {
+            let from = max(0, currentIndex)
             generatorTask = Task { [weak self] in
-                await self?.runGenerator(from: max(0, self?.currentIndex ?? 0))
+                await self?.runGenerator(from: from)
             }
         }
     }
@@ -245,8 +261,8 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         activePlayer?.stop()
         activePlayer = nil
 
-        for (_, url) in pendingAudio { try? FileManager.default.removeItem(at: url) }
-        pendingAudio.removeAll()
+        for (_, url) in audioCache { try? FileManager.default.removeItem(at: url) }
+        audioCache.removeAll()
 
         sentences = []
         sentenceRanges = []
@@ -328,7 +344,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
         for idx in startIdx..<snapshot.count {
             if Task.isCancelled { return }
-            if pendingAudio[idx] != nil { continue }
+            if audioCache[idx] != nil { continue }
 
             // Stay within the lookahead window. Waiting here rather than
             // synthesizing eagerly is what keeps a skipped article from
@@ -338,9 +354,23 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
             }
             if Task.isCancelled { return }
 
+            await synthesizeWithRetry(idx: idx, text: snapshot[idx], voiceID: voiceID)
+        }
+    }
+
+    /// One sentence, with a bounded retry.
+    ///
+    /// Classifying an error as retryable and then not retrying it, which is what
+    /// the first version did, costs the listener a sentence in the middle of an
+    /// article for a single rate limit. `RetryPolicy` honours `Retry-After` and
+    /// clamps the wait, because someone is listening through every delay.
+    private func synthesizeWithRetry(idx: Int, text: String, voiceID: String) async {
+        var attempt = 1
+        while true {
+            if Task.isCancelled { return }
             do {
                 let data = try await api.synthesize(
-                    text: snapshot[idx],
+                    text: text,
                     voiceID: voiceID,
                     settings: .default
                 )
@@ -348,30 +378,45 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent("speakit-el-\(UUID().uuidString).mp3")
                 try data.write(to: url)
-                pendingAudio[idx] = url
+                audioCache[idx] = url
+                if attempt > 1 { lastError = nil }
                 maybeStartPlayback()
+                return
             } catch let error as ElevenLabsAPI.APIError {
                 lastError = error.localizedDescription
-                log("synthesis failed at sentence \(idx + 1): \(error.localizedDescription)")
                 onStateChange?()
+
                 // A key or quota problem will not fix itself on the next
                 // sentence. Stop the whole read instead of failing 200 times
                 // and leaving the user with silence and no explanation.
                 if !error.isRetryable {
+                    log("fatal at sentence \(idx + 1): \(error.localizedDescription)")
                     stop()
                     return
                 }
-                // Retryable, but this pass is giving up on this sentence.
-                // Record it so playback steps over the gap rather than waiting
-                // for audio that is never coming.
-                failedIndices.insert(idx)
-                maybeStartPlayback()
+
+                guard let delay = Self.retryPolicy.delay(after: error, attempt: attempt) else {
+                    log("giving up on sentence \(idx + 1) after \(attempt) attempts")
+                    failedIndices.insert(idx)
+                    maybeStartPlayback()
+                    return
+                }
+                log("retrying sentence \(idx + 1) in \(delay)s (attempt \(attempt))")
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                attempt += 1
             } catch {
+                // Transport-level failure, most often the network dropping.
+                // Same bounded retry as a 5xx.
                 lastError = error.localizedDescription
-                log("synthesis failed at sentence \(idx + 1): \(error)")
-                failedIndices.insert(idx)
                 onStateChange?()
-                maybeStartPlayback()
+                guard attempt < Self.retryPolicy.maxAttempts else {
+                    log("giving up on sentence \(idx + 1): \(error)")
+                    failedIndices.insert(idx)
+                    maybeStartPlayback()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64(0.4 * Double(attempt) * 1_000_000_000))
+                attempt += 1
             }
         }
     }
@@ -382,12 +427,13 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         guard activePlayer == nil, !_isPaused else { return }
         switch SentenceQueue.next(
             after: currentIndex,
-            ready: Set(pendingAudio.keys),
+            ready: Set(audioCache.keys),
             failed: failedIndices,
             total: sentences.count
         ) {
         case .play(let idx):
-            guard let url = pendingAudio.removeValue(forKey: idx) else { return }
+            // Read, do not remove. The cache is what makes a backward seek free.
+            guard let url = audioCache[idx] else { return }
             playIndex(idx, url: url)
         case .waiting:
             return
@@ -413,7 +459,6 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
                 onHighlight?()
             }
             startProgressTimer()
-            try? FileManager.default.removeItem(at: url)
             log("playing sentence \(idx + 1)/\(sentences.count) (\(String(format: "%.1f", player.duration))s)")
         } catch {
             log("playIndex \(idx) FAILED: \(error)")
