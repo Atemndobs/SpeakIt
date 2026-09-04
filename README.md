@@ -100,9 +100,9 @@ In the SpeakIt menu bar dropdown, toggle **"Speak copies from Claude"** ON to al
 - Menu-bar app (no Dock icon)
 - Global hotkey (default **⌃⌘S**) → captures current selection → speaks it
 - Floating bubble near cursor with pause/stop
-- **Two engines:** Apple Speech (offline) + Microsoft Edge Neural (online, free, higher quality)
+- **Three engines:** Apple Speech (offline) + Microsoft Edge Neural (online, free) + ElevenLabs (online, paid, highest quality)
 - Voice picker per engine, speed slider
-- Provider abstraction (next: ElevenLabs / OpenAI as paid options)
+- Provider abstraction (next: OpenAI as a further paid option)
 - Claude Code plugin (`claude-speak`) — auto-read Stop hook + slash commands
 - Speak-on-copy from Claude desktop app
 - Chrome extension speaker button on `claude.ai` / `claude.com`
@@ -122,6 +122,62 @@ For the macOS Services menu entry: right-click selected text → Services → **
 
 ---
 
+## ElevenLabs
+
+The highest-quality engine, and the only paid one. Apple Speech is free and
+offline, Edge Neural is free and online, ElevenLabs bills per character.
+
+### Setup
+
+1. Get a key at [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys).
+2. Menu bar, set **Engine** to ElevenLabs.
+3. Paste the key and press **Save key**.
+
+The key goes into the **macOS Keychain**, not `UserDefaults`. It is a bearer
+credential that bills money, and a preferences plist is world-readable to
+anything running as your user.
+
+After saving, the panel validates the key, loads your voice catalogue and shows
+the remaining character quota. Your own cloned and professional voices sort to
+the top of the picker.
+
+### What is different from the free engines
+
+**It costs money per sentence**, so synthesis runs at most three sentences ahead
+of playback. Without that cap, pressing play on a long article would bill the
+whole thing immediately, including the part you skip. Seeking backwards also
+keeps audio already paid for rather than re-synthesizing it.
+
+**There is no speaking-rate parameter** in the API, unlike `edge-tts` where rate
+is baked into synthesis. Speed is applied at playback instead. The slider
+midpoint maps to exactly 1.0x, which `PlaybackRateTests` guards, because
+everyone leaves it there.
+
+**Failures are distinguished.** A rejected key or an exhausted quota stops the
+read immediately rather than failing once per sentence and leaving you with
+silence and no explanation. A 500 or a rate limit is retryable and behaves that
+way. The reason is shown in the menu bar.
+
+### Development
+
+`ElevenLabsKit` is a separate library target holding the client, models,
+Keychain storage and rate mapping. SpeakIt is an `@main` executable and
+executables are awkward to import from a test target, so the testable half lives
+outside the app.
+
+```bash
+swift test                                        # 37 tests, network stubbed
+ELEVENLABS_API_KEY=xi-... swift test --filter LiveAPITests   # 4 real API calls
+```
+
+The live tests skip unless the key is set. They exist because a stubbed client
+only proves the code matches my belief about the API, not that the belief is
+right. `testLiveSynthesisReturnsPlayableMP3` checks the MP3 frame header rather
+than just a byte count, since a JSON error body can arrive with a 200, and it
+writes the audio to a temp file so it can actually be listened to.
+
+---
+
 ## Source layout
 
 ```
@@ -130,6 +186,7 @@ AppDelegate.swift         — lifecycle, hotkey registration, AX prompt
 TTSProvider.swift         — protocol (so we can add Edge TTS, ElevenLabs, etc.)
 AVSpeechProvider.swift    — Apple AVSpeechSynthesizer adapter
 EdgeTTSProvider.swift     — Microsoft Edge Neural via edge-tts CLI
+ElevenLabsProvider.swift  : ElevenLabs, sentence-queued streaming synthesis
 TTSEngine.swift           — singleton state, current provider, voice, rate
 SelectionReader.swift     — sends ⌘C, reads pasteboard, restores
 BubbleWindow.swift        — floating NSPanel near cursor
