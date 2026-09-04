@@ -4,3 +4,9 @@ Package.resolved
 *.xcodeproj
 DerivedData/
 .DS_Store
+
+# Secrets. The ElevenLabs API key is a bearer credential that bills money,
+# and this repository is public.
+.env
+.env.*
+!.env.example
