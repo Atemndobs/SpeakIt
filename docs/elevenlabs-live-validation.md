@@ -46,7 +46,7 @@ app has stored.
 swift test --filter LiveAPITests
 ```
 
-Four tests, all currently skipping. Expected after the key is set:
+Four tests. **All four passed on 2026-09-04**, first live run. Expected results:
 
 | Test | Proves |
 |---|---|
@@ -65,7 +65,60 @@ exist is not proof that it sounds right.
 
 Record the numbers below.
 
+### First run, 2026-09-04
+
+```
+tier: free, 10,000 character limit, 0 used at start
+voices returned: 21
+voice used: Roger (american)
+synthesis: 36,407 bytes in 0.21s
+audio: ID3v2.4, MPEG layer III, 128 kbps, 44.1 kHz mono, 2.27s, verified with ffprobe
+quota after: 17 characters, visible only after ~20s delay
+bad key: rejected cleanly as unauthorized
+```
+
+Still outstanding: the manual checks in section 3, which need the app running.
+
+## 1b. Two things the first live run taught us
+
+**The API key needs scopes.** A key created with restricted permissions returns
+`401` with the same shape as a bad key. Grant these three at
+elevenlabs.io/app/settings/api-keys:
+
+| Scope | Needed for |
+|---|---|
+| `user_read` | quota and the settings panel |
+| `voices_read` | the voice picker |
+| `text_to_speech` | synthesis |
+
+`models_read` is **not** needed; nothing here calls `/v1/models`.
+
+**Free accounts cannot use shared library voices through the API.** A hardcoded
+premade voice ID returns `402 paid_plan_required`. Voices already on the account
+work: the first live run synthesized fine with "Roger" from the account's own
+catalogue of 21. Always pick a voice from `/v1/voices` rather than pasting an ID
+from the docs.
+
 ## 2. Quota accounting, which is the interesting part
+
+**`character_count` lags by roughly twenty seconds.** Reading it immediately
+after a synthesis shows no change, which looks exactly like the spend cap
+working when it is really just latency. Wait before taking Q1, or the whole
+measurement is worthless.
+
+**`/v1/history` is the better instrument.** It records one entry per synthesis
+request with the exact character count of each:
+
+```bash
+curl -s -H "xi-api-key: $ELEVENLABS_API_KEY" \
+  "https://api.elevenlabs.io/v1/history?page_size=20" | python3 -m json.tool
+```
+
+That lets you **count the requests**, not just the characters, which is a direct
+measurement of the three-sentence lookahead rather than an inference from a
+total. Play four sentences of a twenty-sentence article, stop, and expect at
+most seven entries. Twenty entries means the cap is broken.
+
 
 The point is to show the three-sentence lookahead is real, not asserted.
 
