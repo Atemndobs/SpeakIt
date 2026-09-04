@@ -43,6 +43,14 @@ public struct ElevenLabsAPI: Sendable {
     public enum APIError: LocalizedError, Equatable {
         case missingAPIKey
         case unauthorized
+        /// The key is valid but was created without a required scope.
+        /// Distinct from `unauthorized` on purpose: telling someone their key
+        /// was rejected when it is actually fine sends them off to revoke and
+        /// recreate a perfectly good credential.
+        case missingPermission(scope: String)
+        /// The plan does not allow this. Free accounts cannot use shared
+        /// library voices through the API, which is the common case.
+        case paidPlanRequired(String)
         case rateLimited(retryAfter: TimeInterval?)
         case quotaExceeded
         case http(status: Int, message: String)
@@ -57,6 +65,11 @@ public struct ElevenLabsAPI: Sendable {
                 return "No ElevenLabs API key. Add one in SpeakIt settings."
             case .unauthorized:
                 return "ElevenLabs rejected the API key."
+            case .missingPermission(let scope):
+                return "The API key is valid but lacks the '\(scope)' permission. "
+                     + "Edit the key at elevenlabs.io/app/settings/api-keys and grant it."
+            case .paidPlanRequired(let message):
+                return "ElevenLabs plan limit: \(message)"
             case .rateLimited(let retryAfter):
                 if let retryAfter {
                     return "ElevenLabs rate limit reached. Retry in \(Int(retryAfter))s."
@@ -80,6 +93,9 @@ public struct ElevenLabsAPI: Sendable {
         /// retrying them just burns time while the user waits for audio.
         public var isRetryable: Bool {
             switch self {
+            case .missingPermission, .paidPlanRequired:
+                // Retrying cannot grant a scope or upgrade a plan.
+                return false
             case .rateLimited, .emptyAudio, .notAudio:
                 // notAudio is usually a transient upstream hiccup rather than a
                 // permanent contract change, so it is worth one more attempt.
@@ -206,7 +222,14 @@ public struct ElevenLabsAPI: Sendable {
         case 200..<300:
             return
         case 401, 403:
+            // A scoped key that is missing a permission also arrives as a 401,
+            // but it means something completely different from a bad key.
+            if let scope = Self.missingScope(from: body) {
+                throw APIError.missingPermission(scope: scope)
+            }
             throw APIError.unauthorized
+        case 402:
+            throw APIError.paidPlanRequired(Self.errorMessage(from: body) ?? "upgrade required")
         case 429:
             let retry = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
             throw APIError.rateLimited(retryAfter: retry)
@@ -224,6 +247,25 @@ public struct ElevenLabsAPI: Sendable {
     /// ElevenLabs returns `{"detail": {"message": "...", "status": "..."}}` in
     /// some cases and `{"detail": "..."}` in others. Handle both rather than
     /// showing the user a raw JSON blob.
+    /// Pull the scope name out of "missing the permission X to execute".
+    ///
+    /// The status field is the reliable signal; the scope name is parsed from
+    /// the message purely so the error can name it, and a parse failure
+    /// degrades to a generic scope rather than misreporting a bad key.
+    static func missingScope(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let detail = object["detail"] as? [String: Any],
+              (detail["status"] as? String) == "missing_permissions"
+        else { return nil }
+
+        let message = (detail["message"] as? String) ?? ""
+        if let range = message.range(of: "missing the permission "),
+           let end = message[range.upperBound...].firstIndex(of: " ") {
+            return String(message[range.upperBound..<end])
+        }
+        return "required"
+    }
+
     static func errorMessage(from data: Data) -> String? {
         guard !data.isEmpty,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
