@@ -90,10 +90,37 @@ final class AudioSnifferTests: XCTestCase {
         XCTAssertFalse(AudioSniffer.isAudio(json))
     }
 
-    func testRejectsJSONEvenWhenContentTypeLies() {
-        // A declared audio type does not override recognisable JSON... but if
-        // the bytes are unrecognisable we do trust the header, so assert the
-        // specific behaviour rather than assuming.
+    /// The case the previous test missed. It asserted with
+    /// `application/json`, which never reached the header-trusting branch, so
+    /// it passed for the wrong reason. A gateway serving JSON under
+    /// `audio/mpeg` is exactly what a sniffer is for.
+    func testRejectsJSONWithAFraudulentAudioHeader() {
+        let json = Data(#"{"detail":{"status":"system_busy"}}"#.utf8)
+        XCTAssertNil(AudioSniffer.detect(json, contentType: "audio/mpeg"))
+        XCTAssertFalse(AudioSniffer.isAudio(json, contentType: "audio/mpeg"))
+    }
+
+    func testRejectsHTMLWithAFraudulentAudioHeader() {
+        let html = Data("<!DOCTYPE html><html><body>502 Bad Gateway</body></html>".utf8)
+        XCTAssertNil(AudioSniffer.detect(html, contentType: "audio/mpeg"))
+    }
+
+    func testRejectsXMLErrorWithAnAudioHeader() {
+        let xml = Data("<?xml version=\"1.0\"?><Error><Code>Throttled</Code></Error>".utf8)
+        XCTAssertNil(AudioSniffer.detect(xml, contentType: "audio/mpeg"))
+    }
+
+    func testRejectsJSONArrayBody() {
+        XCTAssertNil(AudioSniffer.detect(Data("[]".utf8), contentType: "audio/mpeg"))
+    }
+
+    func testLeadingWhitespaceDoesNotHideTextBodies() {
+        // Proxies add whitespace freely; the sniff must see past it.
+        let padded = Data("\n\n   {\"detail\":\"nope\"}".utf8)
+        XCTAssertNil(AudioSniffer.detect(padded, contentType: "audio/mpeg"))
+    }
+
+    func testRejectsJSONWithAnHonestHeaderToo() {
         let json = Data(#"{"detail":"oops"}"#.utf8)
         XCTAssertNil(AudioSniffer.detect(json, contentType: "application/json"))
     }

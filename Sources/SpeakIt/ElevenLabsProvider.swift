@@ -37,9 +37,15 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
     /// replays it instead of buying it again. The cost is temp-file disk for
     /// the duration of one read, which is a few megabytes for a long article.
     private var audioCache: [Int: URL] = [:]
-    /// Sentences that will never produce audio. Playback steps over these;
-    /// without them a single transient failure stalls the read forever.
-    private var failedIndices: Set<Int> = []
+    /// Decisions about the current read. The file table above holds the bytes;
+    /// this holds which indices are ready, failed, and where the playhead is.
+    /// Every mutation goes through cacheAudio/discardAudio so the two cannot
+    /// drift apart.
+    private var state = ReadState(total: 0)
+    /// Set by pause. The generator finishes the request it is already waiting
+    /// on, caches it, and then stops before starting the next one. Cancelling
+    /// mid-flight would throw away audio ElevenLabs has already billed.
+    private var generationPaused = false
     private var currentIndex: Int = -1
     private var activePlayer: AVAudioPlayer?
     private var generatorTask: Task<Void, Never>?
@@ -210,7 +216,8 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         sentences = pairs.map { $0.0 }
         sentenceRanges = pairs.map { $0.1 }
         currentIndex = -1
-        failedIndices = []
+        state = ReadState(total: sentences.count)
+        generationPaused = false
         progress = 0
         highlightRange = nil
         lastError = nil
@@ -229,12 +236,11 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         activePlayer?.pause()
         progressTimer?.invalidate()
         _isPaused = true
-        // Stop buying audio while paused. Previously the generator kept running
-        // until it was three sentences ahead, so pausing did not stop spending
-        // the way the comment claimed. Cancelling is safe because the cache
-        // survives, so resuming re-synthesizes nothing already bought.
-        generatorTask?.cancel()
-        generatorTask = nil
+        // Stop buying more audio, but do not cancel what is already in flight.
+        // That request has been sent and will be billed whether or not the
+        // response is used, so the generator finishes it and caches it, then
+        // blocks before starting the next one.
+        generationPaused = true
         onStateChange?()
     }
 
@@ -242,9 +248,10 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         activePlayer?.play()
         startProgressTimer()
         _isPaused = false
+        generationPaused = false
         onStateChange?()
-        // Restart the generator that pause() cancelled. It skips anything
-        // already in the cache, so this costs nothing for audio already bought.
+        // The generator was gated, not cancelled, so it usually resumes on its
+        // own. Restart only if it had already run to the end of the text.
         if generatorTask == nil {
             let from = max(0, currentIndex)
             generatorTask = Task { [weak self] in
@@ -261,14 +268,14 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         activePlayer?.stop()
         activePlayer = nil
 
-        for (_, url) in audioCache { try? FileManager.default.removeItem(at: url) }
-        audioCache.removeAll()
+        purgeAudio()
 
         sentences = []
         sentenceRanges = []
         originalText = ""
         currentIndex = -1
-        failedIndices = []
+        state = ReadState(total: 0)
+        generationPaused = false
         highlightRange = nil
         let was = _isSpeaking || _isPaused
         _isSpeaking = false
@@ -311,10 +318,11 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         // It has already been paid for, and seeking backwards over a paragraph
         // you just heard should not re-bill it.
         currentIndex = target - 1
-        // Give sentences at or after the target another chance: the generator
-        // is about to run over them again, and the failure may have been the
-        // rate limit that has since cleared.
-        failedIndices = failedIndices.filter { $0 < target }
+        // Gives sentences at or after the target another chance. Cached audio
+        // before the target is kept, so seeking back over a paragraph you just
+        // heard replays it instead of buying it again.
+        state.seek(to: target)
+        generationPaused = false
         _isPaused = false
         _isSpeaking = true
         if target < sentenceRanges.count {
@@ -344,12 +352,15 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
         for idx in startIdx..<snapshot.count {
             if Task.isCancelled { return }
-            if audioCache[idx] != nil { continue }
+            // Skips anything already bought, which is what makes resuming and
+            // re-seeking free.
+            if !state.needsSynthesis(idx) { continue }
 
-            // Stay within the lookahead window. Waiting here rather than
-            // synthesizing eagerly is what keeps a skipped article from
-            // billing in full.
-            while !Task.isCancelled, idx > currentIndex + Self.lookahead {
+            // Two gates before spending: the lookahead cap, and pause. Waiting
+            // here rather than synthesizing eagerly is what keeps a skipped or
+            // paused article from billing in full.
+            while !Task.isCancelled,
+                  generationPaused || !state.isWithinLookahead(idx, lookahead: Self.lookahead) {
                 try? await Task.sleep(nanoseconds: 120_000_000)
             }
             if Task.isCancelled { return }
@@ -378,7 +389,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent("speakit-el-\(UUID().uuidString).mp3")
                 try data.write(to: url)
-                audioCache[idx] = url
+                cacheAudio(idx, url: url)
                 if attempt > 1 { lastError = nil }
                 maybeStartPlayback()
                 return
@@ -397,7 +408,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
                 guard let delay = Self.retryPolicy.delay(after: error, attempt: attempt) else {
                     log("giving up on sentence \(idx + 1) after \(attempt) attempts")
-                    failedIndices.insert(idx)
+                    state.markSynthesisFailed(idx)
                     maybeStartPlayback()
                     return
                 }
@@ -411,7 +422,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
                 onStateChange?()
                 guard attempt < Self.retryPolicy.maxAttempts else {
                     log("giving up on sentence \(idx + 1): \(error)")
-                    failedIndices.insert(idx)
+                    state.markSynthesisFailed(idx)
                     maybeStartPlayback()
                     return
                 }
@@ -421,16 +432,34 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         }
     }
 
+    // MARK: - Cache bookkeeping
+
+    /// Record audio and its file together, so `state.ready` and `audioCache`
+    /// can never disagree.
+    private func cacheAudio(_ idx: Int, url: URL) {
+        audioCache[idx] = url
+        state.cache(idx)
+    }
+
+    /// Drop one entry and its file.
+    private func discardAudio(_ idx: Int) {
+        if let url = audioCache.removeValue(forKey: idx) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Release every cached file. Used on stop, on a new read, and at the
+    /// natural end of a read.
+    private func purgeAudio() {
+        for (_, url) in audioCache { try? FileManager.default.removeItem(at: url) }
+        audioCache.removeAll()
+    }
+
     // MARK: - Playback
 
     private func maybeStartPlayback() {
         guard activePlayer == nil, !_isPaused else { return }
-        switch SentenceQueue.next(
-            after: currentIndex,
-            ready: Set(audioCache.keys),
-            failed: failedIndices,
-            total: sentences.count
-        ) {
+        switch state.next() {
         case .play(let idx):
             // Read, do not remove. The cache is what makes a backward seek free.
             guard let url = audioCache[idx] else { return }
@@ -454,6 +483,7 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
             player.play()
             activePlayer = player
             currentIndex = idx
+            state.beganPlaying(idx)
             if idx < sentenceRanges.count {
                 highlightRange = sentenceRanges[idx]
                 onHighlight?()
@@ -461,7 +491,12 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
             startProgressTimer()
             log("playing sentence \(idx + 1)/\(sentences.count) (\(String(format: "%.1f", player.duration))s)")
         } catch {
-            log("playIndex \(idx) FAILED: \(error)")
+            // The player refused the file. Drop it and record the failure
+            // before advancing, otherwise the queue selects the same index
+            // again on the next tick and the provider spins.
+            log("playIndex \(idx) FAILED, dropping: \(error)")
+            discardAudio(idx)
+            state.markPlaybackFailed(idx)
             advance()
         }
     }
@@ -475,6 +510,12 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
 
     private func handleEnd() {
         progressTimer?.invalidate(); progressTimer = nil
+        // Seeking is refused once a read is no longer speaking, so holding temp
+        // files past completion buys nothing and leaves disk behind until the
+        // next speak or stop. Replaying a finished read starts a new one and
+        // re-synthesizes, which is the honest cost of ending here.
+        purgeAudio()
+        state.complete()
         progress = 1
         onProgress?()
         _isSpeaking = false

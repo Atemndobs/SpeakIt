@@ -24,7 +24,8 @@ public enum AudioSniffer {
 
     /// - Parameters:
     ///   - data: the response body.
-    ///   - contentType: the `Content-Type` header, if any.
+    ///   - contentType: the `Content-Type` header, if any. A declared audio
+    ///     type is trusted only for bodies that are not recognisable text.
     /// - Returns: the detected format, or nil when the body is not audio.
     public static func detect(_ data: Data, contentType: String? = nil) -> Format? {
         guard !data.isEmpty else { return nil }
@@ -50,15 +51,42 @@ public enum AudioSniffer {
             return .flac
         }
 
-        // Nothing matched. Trust a declared audio content type rather than
-        // rejecting a format this build has not heard of, but never trust a
-        // declared JSON or text type.
+        // Recognisable text beats the header. A gateway returning a JSON or
+        // HTML error under `Content-Type: audio/mpeg` is exactly the case a
+        // sniffer exists for, and trusting the header there would defeat it.
+        if looksLikeText(data) { return nil }
+
+        // Nothing matched and the body is not recognisable text. Trust a
+        // declared audio type rather than rejecting a container this build has
+        // not heard of, since refusing would break playback on an upstream
+        // change that is not actually a problem.
         if let contentType = contentType?.lowercased(),
            contentType.hasPrefix("audio/") {
             return .unrecognisedButDeclaredAudio
         }
 
         return nil
+    }
+
+    /// True when the body opens like JSON, HTML or XML.
+    ///
+    /// Only the first non-whitespace bytes are inspected. Audio containers do
+    /// not begin with `{`, `[` or `<`, so this is cheap and has no realistic
+    /// false positive on real audio.
+    static func looksLikeText(_ data: Data) -> Bool {
+        // Skip leading whitespace, which proxies and gateways add freely.
+        guard let first = data.prefix(64).first(where: {
+            $0 != 0x20 && $0 != 0x09 && $0 != 0x0A && $0 != 0x0D
+        }) else { return false }
+
+        switch first {
+        case 0x7B, 0x5B:  // { [
+            return true
+        case 0x3C:        // <  covers <html, <!DOCTYPE, <?xml, <Error>
+            return true
+        default:
+            return false
+        }
     }
 
     /// True when the body is safe to hand to a player.
