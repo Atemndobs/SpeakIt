@@ -122,6 +122,9 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
         guard credentials.hasKey else {
             _voices = []
             Self.cacheVoices([])
+            // Previously silent. A panel that shows an empty voice list and no
+            // reason is indistinguishable from a broken network.
+            lastError = ElevenLabsAPI.APIError.missingAPIKey.localizedDescription
             onStateChange?()
             return false
         }
@@ -146,9 +149,18 @@ final class ElevenLabsProvider: NSObject, TTSProvider {
             onStateChange?()
             return true
         } catch {
-            lastError = (error as? ElevenLabsAPI.APIError)?.localizedDescription
+            var message = (error as? ElevenLabsAPI.APIError)?.localizedDescription
                 ?? error.localizedDescription
-            log("voice refresh failed: \(lastError ?? "unknown")")
+            // Name where the key came from. A stale shell variable silently
+            // overrides a correct key in the Keychain, and without this the
+            // message sends you looking in the wrong place.
+            if case .unauthorized? = error as? ElevenLabsAPI.APIError,
+               credentials.source.overridesKeychain {
+                message += " It came from \(credentials.source.rawValue), which "
+                        + "overrides the Keychain. Unset it to use the saved key."
+            }
+            lastError = message
+            log("voice refresh failed: \(message)")
             onStateChange?()
             return false
         }

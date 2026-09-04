@@ -98,3 +98,41 @@ final class ScopeAndPlanTests: XCTestCase {
         XCTAssertEqual(ElevenLabsAPI.missingScope(from: body), "voices_read")
     }
 }
+
+/// The environment variable silently overriding the Keychain caused a real
+/// confusing failure: the app reported a rejected key while a correct one sat
+/// in the Keychain unused.
+final class CredentialSourceTests: XCTestCase {
+
+    func testSourceIsEnvironmentWhenTheVariableIsSet() throws {
+        try XCTSkipIf(
+            (ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"] ?? "").isEmpty,
+            "needs ELEVENLABS_API_KEY set to exercise this path"
+        )
+        let creds = ElevenLabsCredentials(service: "test.\(UUID().uuidString)", account: "k")
+        XCTAssertEqual(creds.source, .environment)
+        XCTAssertTrue(creds.source.overridesKeychain)
+    }
+
+    func testSourceIsNoneWithNoKeyAnywhere() throws {
+        try XCTSkipIf(
+            (ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"] ?? "").isEmpty == false,
+            "environment key shadows the Keychain, so this path is unreachable here"
+        )
+        let creds = ElevenLabsCredentials(service: "test.\(UUID().uuidString)", account: "k")
+        XCTAssertEqual(creds.source, .none)
+        XCTAssertFalse(creds.source.overridesKeychain)
+    }
+
+    func testKeychainSourceIsNotFlaggedAsAnOverride() {
+        XCTAssertFalse(ElevenLabsCredentials.Source.keychain.overridesKeychain)
+        XCTAssertFalse(ElevenLabsCredentials.Source.none.overridesKeychain)
+    }
+
+    func testSourceDescriptionsAreHumanReadable() {
+        // These strings go straight into a user-facing error, so they have to
+        // read as a sentence fragment, not as an enum case name.
+        XCTAssertTrue(ElevenLabsCredentials.Source.environment.rawValue.contains("environment variable"))
+        XCTAssertTrue(ElevenLabsCredentials.Source.keychain.rawValue.contains("Keychain"))
+    }
+}

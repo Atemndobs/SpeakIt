@@ -51,6 +51,28 @@ public final class ElevenLabsCredentials: @unchecked Sendable {
         return value
     }
 
+    /// Where the key currently in use came from.
+    ///
+    /// Exists because a stale `ELEVENLABS_API_KEY` in a shell silently
+    /// overrides a correct key in the Keychain, and the resulting "rejected"
+    /// message gives no hint that this is what happened. Naming the source
+    /// turns a confusing failure into an obvious one.
+    public enum Source: String {
+        case environment = "the ELEVENLABS_API_KEY environment variable"
+        case keychain = "the Keychain"
+        case none = "nowhere"
+
+        public var overridesKeychain: Bool { self == .environment }
+    }
+
+    public var source: Source {
+        if let fromEnv = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"],
+           !fromEnv.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .environment
+        }
+        return hasKey ? .keychain : .none
+    }
+
     public var hasKey: Bool {
         guard let key = apiKey else { return false }
         return !key.isEmpty
