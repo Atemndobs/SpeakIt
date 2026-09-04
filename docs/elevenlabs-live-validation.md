@@ -119,8 +119,9 @@ measurement of the three-sentence lookahead rather than an inference from a
 total. Play four sentences of a twenty-sentence article, stop, and expect at
 most seven entries. Twenty entries means the cap is broken.
 
+### The Q0 / Q1 method
 
-The point is to show the three-sentence lookahead is real, not asserted.
+Still valid as a cross-check, as long as you respect the delay above.
 
 **Before anything:**
 
