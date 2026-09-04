@@ -144,6 +144,57 @@ Check quota again. Call it **Q1**.
 Write both numbers into the PR. This is the single most falsifiable claim in the
 whole change and it is worth having a real measurement behind it.
 
+### Measured result, 2026-09-04
+
+A nine-sentence read through the app:
+
+```
+22:53:25   49 chars  ┐
+22:53:25   66 chars  ├─ three fired at once, the lookahead window
+22:53:25   14 chars  ┘
+22:53:26   46 chars
+22:53:27   13 chars
+22:53:32   58 chars     each gated on playback advancing
+22:53:39   18 chars
+22:53:44   36 chars
+22:53:46   80 chars
+                        9 requests, 380 characters
+```
+
+Exactly three immediately, the rest paced across 21 seconds. An unbounded
+prefetch would have fired all nine inside the first second. **The cap binds.**
+
+## 2b. Check you are testing the app you think you are
+
+The measurement above took a detour worth recording, because it will happen
+again.
+
+Every test passed and the app appeared to work: text read aloud, correct voices,
+no errors. The API saw nothing.
+
+The menu-bar app was a `.app` built days earlier, before the provider existed.
+**`swift run` produces a different binary from the installed bundle, and only
+the bundle owns the menu bar.** Reads were silently going through Apple Speech
+offline, which is precisely why nothing looked wrong.
+
+Before trusting any manual measurement:
+
+```bash
+strings ~/Applications/SpeakIt.app/Contents/MacOS/SpeakIt | grep -c elevenlabs
+ps -p "$(pgrep -x SpeakIt | head -1)" -o lstart=
+```
+
+Zero matches, or a start time older than your last build, means you are testing
+the wrong binary. Rebuild and relaunch:
+
+```bash
+./scripts/build-app.sh
+osascript -e 'tell application "SpeakIt" to quit'
+open ~/Applications/SpeakIt.app
+```
+
+The binary changes identity, so macOS may require re-granting Accessibility.
+
 ## 3. Manual checks the tests cannot make
 
 Run the app for these.
