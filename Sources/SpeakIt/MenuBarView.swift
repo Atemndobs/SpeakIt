@@ -23,28 +23,17 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            // Title and transport share the top row. The transport was a row
+            // and a divider of its own for two buttons that are greyed out
+            // whenever nothing is playing.
+            HStack(spacing: 8) {
                 Text("SpeakIt").font(.headline)
-                Spacer()
+
                 if engine.isSpeaking {
                     Image(systemName: "waveform").foregroundStyle(.tint)
                 }
-            }
 
-            Divider()
-
-            HStack(spacing: 8) {
-                Button { engine.togglePause() } label: {
-                    Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
-                }
-                .disabled(!engine.isSpeaking && !engine.isPaused)
-
-                Button { engine.stop() } label: {
-                    Image(systemName: "stop.fill")
-                }
-                .disabled(!engine.isSpeaking && !engine.isPaused)
-
-                Spacer()
+                Spacer(minLength: 0)
 
                 if (engine.isSpeaking || engine.isPaused) && !bubble.isVisible {
                     Button("Show Player") {
@@ -52,7 +41,23 @@ struct MenuBarView: View {
                     }
                     .controlSize(.small)
                 }
+
+                Button { engine.togglePause() } label: {
+                    Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                }
+                .controlSize(.small)
+                .disabled(!engine.isSpeaking && !engine.isPaused)
+                .help(engine.isPaused ? "Resume" : "Pause")
+
+                Button { engine.stop() } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .controlSize(.small)
+                .disabled(!engine.isSpeaking && !engine.isPaused)
+                .help("Stop")
             }
+
+            Divider()
 
             Picker(selection: Binding(
                 get: { engine.activeProviderId },
