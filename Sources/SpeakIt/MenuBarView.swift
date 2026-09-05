@@ -170,18 +170,33 @@ struct MenuBarView: View {
 
             Divider()
 
-            Toggle(isOn: $autoShowOnSelection) {
-                Label("Show play button on selection", systemImage: "cursorarrow.rays")
-            }
-                .toggleStyle(.switch)
-                .controlSize(.small)
+            // One caption carries the verb for all four rows, so each row only
+            // has to name its source. "Speak Claude Code responses" repeated
+            // the same word three times down the column and cost the width
+            // that made the labels wrap.
+            Label("Speak automatically", systemImage: "waveform")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Toggle(isOn: $speakClaudeResponses) {
-                BrandLabel(title: "Speak Claude Code responses",
+                BrandLabel(title: "Claude Code",
                            bundleIDs: BrandIcon.Brand.claude, symbol: "terminal")
             }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Speak each Claude Code response as it finishes")
+
+            Toggle(isOn: Binding(
+                get: { speakCodexResponses },
+                set: { speakCodexResponses = $0; CodexTranscriptWatcher.shared.isEnabled = $0 }
+            )) {
+                BrandLabel(title: "Codex",
+                           bundleIDs: BrandIcon.Brand.openAI,
+                           symbol: "chevron.left.forwardslash.chevron.right")
+            }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Speak each Codex final response")
 
             Toggle(isOn: Binding(
                 get: { speakOnCopy },
@@ -189,21 +204,18 @@ struct MenuBarView: View {
             )) {
                 // Two products share this row, so the clipboard is the honest
                 // icon here rather than picking one brand over the other.
-                Label("Speak copied text (Claude, Codex)", systemImage: "doc.on.clipboard")
+                Label("Copied text", systemImage: "doc.on.clipboard")
             }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Speak text copied while Claude or Codex is frontmost")
 
-            Toggle(isOn: Binding(
-                get: { speakCodexResponses },
-                set: { speakCodexResponses = $0; CodexTranscriptWatcher.shared.isEnabled = $0 }
-            )) {
-                BrandLabel(title: "Speak Codex final responses",
-                           bundleIDs: BrandIcon.Brand.openAI,
-                           symbol: "chevron.left.forwardslash.chevron.right")
+            Toggle(isOn: $autoShowOnSelection) {
+                Label("Play button on selection", systemImage: "cursorarrow.rays")
             }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Show a floating play button whenever text is selected")
 
             Divider()
 
@@ -227,7 +239,7 @@ struct MenuBarView: View {
             Divider()
 
             Button { NSApp.terminate(nil) } label: {
-                Label("Quit SpeakIt", systemImage: "xmark.circle")
+                Label("Quit", systemImage: "xmark.circle")
             }
                 .keyboardShortcut("q")
         }
@@ -267,80 +279,93 @@ private struct LocalServerSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            // One control row rather than four stacked ones: power, folders,
+            // add, open. Each is a glyph with a tooltip, because at 320pt the
+            // words were costing a line each and saying little the icon does
+            // not already say.
+            HStack(spacing: 8) {
                 Label("Local file server", systemImage: "server.rack")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if server.isRunning {
-                    Circle().fill(.green).frame(width: 6, height: 6)
-                    Text("localhost:\(server.port)").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            HStack(spacing: 6) {
                 Toggle(isOn: Binding(
                     get: { server.isRunning },
                     set: { _ in server.toggle() }
                 )) {
-                    Text(server.isRunning ? "Running" : "Off")
+                    EmptyView()
                 }
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(server.isRunning ? "Serving on localhost:\(server.port)" : "Server off")
 
-                Spacer()
+                if !server.shares.isEmpty {
+                    Button {
+                        sharesExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: sharesExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8, weight: .semibold))
+                            Image(systemName: "folder")
+                            Text("\(server.shares.count)").monospacedDigit()
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(sharesExpanded ? "Hide shared folders" : "Show shared folders")
+                }
+
+                Button {
+                    server.pickAndAddShare()
+                    // Open the list on add, otherwise adding a folder while
+                    // collapsed looks like nothing happened.
+                    sharesExpanded = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .controlSize(.small)
+                .help("Add a folder to share")
+
+                Spacer(minLength: 0)
 
                 if server.isRunning {
-                    Button("Open") { server.openInBrowser() }
-                        .controlSize(.small)
+                    Circle().fill(.green).frame(width: 6, height: 6)
+                    Button {
+                        server.openInBrowser()
+                    } label: {
+                        Image(systemName: "safari")
+                    }
+                    .controlSize(.small)
+                    .help("Open http://localhost:\(server.port) in the browser")
                 }
             }
 
-            // Folded by default. Sixteen shared folders is a realistic
-            // number and the flat list pushed everything below it off the
-            // bottom of the menu, so the list is opt-in rather than the
-            // default view.
-            if !server.shares.isEmpty {
-                DisclosureGroup(isExpanded: $sharesExpanded) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(server.shares) { share in
-                            HStack(spacing: 4) {
-                                Label(share.name, systemImage: "folder")
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                Spacer()
-                                Button {
-                                    server.removeShare(share.id)
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .help(share.path)
+            // Folded by default. Sixteen shared folders is a realistic number
+            // and the flat list pushed the bind mode, reader AI section and
+            // quit button off the bottom of the menu.
+            if sharesExpanded, !server.shares.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(server.shares) { share in
+                        HStack(spacing: 4) {
+                            Label(share.name, systemImage: "folder")
+                                .font(.caption)
+                                .lineLimit(1)
+                            Spacer()
+                            Button {
+                                server.removeShare(share.id)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
                             }
+                            .buttonStyle(.plain)
+                            .help("Stop sharing \(share.path)")
                         }
                     }
-                    .padding(.top, 2)
-                } label: {
-                    // The count belongs on the closed row: collapsed, it is
-                    // the only thing telling you anything is shared at all.
-                    Label(
-                        server.shares.count == 1 ? "1 folder" : "\(server.shares.count) folders",
-                        systemImage: "folder"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
+                .padding(.leading, 2)
             }
-
-            Button {
-                server.pickAndAddShare()
-                // Open the list on add, otherwise adding a folder while
-                // collapsed looks like nothing happened.
-                sharesExpanded = true
-            } label: {
-                Label("Add Folder…", systemImage: "plus")
-            }
-            .controlSize(.small)
 
             Picker(selection: $server.bindMode) {
                 ForEach(LocalFileServer.BindMode.allCases) { mode in
@@ -355,9 +380,10 @@ private struct LocalServerSection: View {
 
             if server.bindMode == .tailnet {
                 Toggle(isOn: $server.tailscaleHTTPS) {
-                    BrandLabel(title: "Use Tailscale HTTPS (proxy :443)",
+                    BrandLabel(title: "Tailscale HTTPS",
                                bundleIDs: BrandIcon.Brand.tailscale, symbol: "lock.shield")
                 }
+                .help("Serve over the tailnet on the HTTPS proxy, port 443")
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 if let err = server.lastTailscaleError, !err.isEmpty {
@@ -513,7 +539,7 @@ private struct ReaderAISection: View {
             }
 
             Toggle(isOn: $llm.enabled) {
-                Label("Enable Ask AI in reader", systemImage: "wand.and.stars")
+                Label("Ask AI in reader", systemImage: "wand.and.stars")
             }
                 .toggleStyle(.switch)
                 .controlSize(.small)
