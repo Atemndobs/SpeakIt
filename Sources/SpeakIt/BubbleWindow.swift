@@ -322,7 +322,6 @@ private struct ExpandedBar: View {
     // hides too so the resting card is just art + text + a thin progress line.
     private var chrome: Bool { embedded || hovering }
     private var enabled: Bool { engine.isSpeaking || engine.isPaused }
-    private var showGrip: Bool { mode == .full && chrome }
     private var showPrev: Bool { mode == .full && chrome }
     private var showPlay: Bool { chrome || mode == .mini }
     private var showBottomSeek: Bool { mode != .mini }
@@ -375,16 +374,9 @@ private struct ExpandedBar: View {
 
     private var content: some View {
         HStack(spacing: mode == .mini ? 8 : 10) {
-            if !embedded { leftRail }
-
-            // Art + text double as a drag surface once the grip is gone.
+            // Art (flush to the left border) + text double as the drag surface.
             HStack(spacing: mode == .mini ? 8 : 10) {
-                ProviderArtwork(providerId: engine.activeProviderId,
-                                voiceId: engine.selectedVoiceId,
-                                active: engine.isSpeaking && !engine.isPaused)
-                    .onTapGesture { window.toggleTranscript() }
-                    .help(providerHelp)
-
+                artwork
                 if showMeta { titleBlock }
             }
             .simultaneousGesture(windowDrag)
@@ -393,26 +385,28 @@ private struct ExpandedBar: View {
 
             controls
         }
-        .padding(.leading, 6)
+        .padding(.leading, 5)
         .padding(.trailing, mode == .mini ? 8 : 14)
         .padding(.top, 2)
         .padding(.bottom, showBottomSeek ? 4 : 2)
     }
 
-    /// Left rail: red close dot on top, the six-dot drag grip below it, both
-    /// left-aligned and top-aligned to the album art (its height matches the
-    /// 42pt artwork). Hidden at rest, revealed on hover with the rest of the
-    /// chrome. Reserves its width always so the artwork never shifts.
-    private var leftRail: some View {
-        VStack(spacing: 3) {
-            TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
-                       symbol: "xmark", help: "Close player", action: onClose)
-            if showGrip { DotDragHandle(window: window) }
-            Spacer(minLength: 0)
-        }
-        .frame(width: 16, height: 42, alignment: .top)
-        .opacity(chrome ? 1 : 0)
-        .allowsHitTesting(chrome)
+    /// Album art sits flush against the left border (Spotify-style). On hover
+    /// the red close dot appears over its top-left corner; drag the art to move
+    /// the window, tap it for the transcript.
+    private var artwork: some View {
+        ProviderArtwork(providerId: engine.activeProviderId,
+                        voiceId: engine.selectedVoiceId,
+                        active: engine.isSpeaking && !engine.isPaused)
+            .overlay(alignment: .topLeading) {
+                TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                           symbol: "xmark", help: "Close player", action: onClose)
+                    .padding(2)
+                    .opacity(chrome ? 1 : 0)
+                    .allowsHitTesting(chrome)
+            }
+            .onTapGesture { window.toggleTranscript() }
+            .help(providerHelp)
     }
 
     private var windowDrag: some Gesture {
@@ -781,34 +775,6 @@ private struct SeekBar: View {
 }
 
 /// Six-dot drag handle (2×3), the Spotify-style grip. Moves the whole window.
-private struct DotDragHandle: View {
-    @ObservedObject var window: BubbleWindow
-    @State private var dragging = false
-    @State private var hovering = false
-
-    var body: some View {
-        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.4)).frame(width: 2.5, height: 2.5)
-        HStack(spacing: 2.5) {
-            VStack(spacing: 2.5) { dot; dot; dot }
-            VStack(spacing: 2.5) { dot; dot; dot }
-        }
-        .frame(width: 14, height: 24)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            hovering = inside
-            if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    if !dragging { window.beginDrag(); dragging = true }
-                    window.updateDrag(translation: value.translation)
-                }
-                .onEnded { _ in dragging = false; window.endDrag() }
-        )
-    }
-}
-
 /// One corner dot that reveals its glyph on hover. Solid (traffic-light) by
 /// default; `glass` renders a frosted translucent dot to match the card.
 private struct TrafficDot: View {
