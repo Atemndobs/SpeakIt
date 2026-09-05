@@ -47,7 +47,7 @@ final class TTSEngine: ObservableObject {
     // Natural-break navigation: text is read as one continuous utterance; skip
     // buttons jump to sentence or non-empty line starts.
     private var navigationOffsets: [Int] = []  // character offsets (UTF16) into currentText
-    private var pendingRequests: [SpeakRequest] = []
+    private var queue = SpeakQueue<SpeakRequest>()
 
     private enum Keys {
         static let activeProviderId = "SpeakIt.activeProviderId"
@@ -214,23 +214,21 @@ final class TTSEngine: ObservableObject {
         var normalized = request
         normalized.text = trimmed
 
-        switch request.action {
-        case .replace, .interrupt:
-            pendingRequests.removeAll()
-            queueDepth = 0
-            activeProvider?.stop()
+        let replaces = request.action != .enqueue
+        // Queued entries are replayed against an idle engine when their turn
+        // comes, and their text is already normalized by then.
+        normalized.action = .replace
+        normalized.sanitizeMarkdown = false
+
+        let decision = queue.submit(
+            normalized,
+            replacesExisting: replaces,
+            isBusy: isSpeaking || isPaused
+        )
+        queueDepth = queue.depth
+        if decision == .start {
+            if replaces { activeProvider?.stop() }
             startSpeaking(normalized)
-        case .enqueue:
-            if isSpeaking || isPaused {
-                // Queued entries play on their own when their turn comes, so
-                // they are stored as .replace against an idle engine.
-                normalized.action = .replace
-                normalized.sanitizeMarkdown = false
-                pendingRequests.append(normalized)
-                queueDepth = pendingRequests.count
-            } else {
-                startSpeaking(normalized)
-            }
         }
     }
 
@@ -367,6 +365,12 @@ final class TTSEngine: ObservableObject {
     }
 
     func stop() {
+        // Abandon anything waiting BEFORE the provider reports it stopped.
+        // Without this, refreshState sees an idle provider with a non-empty
+        // queue and immediately starts the next read, so stop only stopped the
+        // current sentence and you had to press it once per queued item.
+        queue.cancelAll()
+        queueDepth = 0
         activeProvider?.stop()
         refreshState()
         // Player stays visible — user dismisses via menu-bar Quit.
@@ -381,9 +385,11 @@ final class TTSEngine: ObservableObject {
         let paused = activeProvider?.isPaused ?? false
         isSpeaking = speaking
         isPaused = paused
-        if !speaking && !paused, !pendingRequests.isEmpty {
-            let next = pendingRequests.removeFirst()
-            queueDepth = pendingRequests.count
+        // A read that ended on its own hands over to the next queued one.
+        // Reached only via provider state changes; `stop()` empties the queue
+        // first so pressing stop cannot start the next read.
+        if !speaking && !paused, let next = queue.advance() {
+            queueDepth = queue.depth
             startSpeaking(next)
         }
         // Bubble persists across playback boundaries — no auto-hide.
