@@ -17,6 +17,10 @@ struct MenuBarView: View {
     @AppStorage(VoiceAvatarStore.Keys.mode) private var avatarMode: String = VoiceAvatarStore.modePhoto
     @AppStorage(VoiceAvatarStore.Keys.style) private var avatarStyle: String = VoiceAvatarStore.defaultStyle
 
+    /// Closed by default, and remembered. Someone configuring the server does
+    /// not want to reopen it on every visit.
+    @AppStorage("SpeakIt.ui.settingsExpanded") private var settingsExpanded: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -134,8 +138,12 @@ struct MenuBarView: View {
                 ElevenLabsSection(engine: engine, provider: eleven)
             }
 
+            // Only a problem escapes the fold. A broken engine hidden behind a
+            // closed disclosure means the app looks silently mute, with the
+            // reason one click away and no sign it is there. The healthy
+            // "running locally" line lives in Settings.
             if engine.activeProviderId == "kokoro", let kokoro = engine.kokoro {
-                KokoroSection(provider: kokoro)
+                KokoroSection(provider: kokoro, variant: .problemOnly)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -153,14 +161,8 @@ struct MenuBarView: View {
                 )
             }
 
-            Divider()
-
-            HStack {
-                Label("Hotkey", systemImage: "keyboard").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                KeyboardShortcuts.Recorder(for: .speakSelection)
-            }
-
+            // Also a problem, so it stays outside: without this permission the
+            // hotkey and selection reading do not work at all.
             if !AccessibilityPermission.check(prompt: false) {
                 Button("Grant Accessibility Permission…") {
                     AccessibilityPermission.openSettings()
@@ -219,22 +221,48 @@ struct MenuBarView: View {
 
             Divider()
 
-            LocalServerSection(server: server)
+            // Set-once configuration, folded away. The split is by how often a
+            // control is touched, not by what it belongs to: the things you
+            // reach for mid-read stay above, everything you set when you first
+            // installed the app lives here.
+            DisclosureGroup(isExpanded: $settingsExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label("Hotkey", systemImage: "keyboard")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        KeyboardShortcuts.Recorder(for: .speakSelection)
+                    }
 
-            Divider()
+                    Divider()
 
-            ReaderAISection(llm: llm)
+                    LocalServerSection(server: server)
 
-            Divider()
+                    Divider()
 
-            Toggle(isOn: Binding(
-                get: { loginItem.isEnabled },
-                set: { loginItem.setEnabled($0) }
-            )) {
-                Label("Start at Login", systemImage: "power")
+                    ReaderAISection(llm: llm)
+
+                    Divider()
+
+                    Toggle(isOn: Binding(
+                        get: { loginItem.isEnabled },
+                        set: { loginItem.setEnabled($0) }
+                    )) {
+                        Label("Start at Login", systemImage: "power")
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if engine.activeProviderId == "kokoro", let kokoro = engine.kokoro {
+                        KokoroSection(provider: kokoro, variant: .statusOnly)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
 
             Divider()
 
