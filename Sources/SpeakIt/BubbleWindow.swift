@@ -373,10 +373,11 @@ private struct ExpandedBar: View {
     }
 
     private var content: some View {
-        HStack(spacing: mode == .mini ? 8 : 10) {
-            // Left rail (red close dot + drag grip) only exists on hover; at rest
-            // it's gone entirely so the album art sits flush to the left border.
-            if chrome && !embedded { leftRail }
+        HStack(spacing: 0) {
+            // Left rail (red close dot + drag grip). Its width animates from 0
+            // at rest to 16 on hover, so the album art slides in from the flush
+            // left border instead of jumping.
+            if !embedded { leftRail }
 
             // Art + text double as the drag surface.
             HStack(spacing: mode == .mini ? 8 : 10) {
@@ -385,7 +386,7 @@ private struct ExpandedBar: View {
             }
             .simultaneousGesture(windowDrag)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
 
             controls
         }
@@ -396,7 +397,7 @@ private struct ExpandedBar: View {
     }
 
     /// Red close dot on top, the six-dot drag grip below it — the left rail
-    /// that appears on hover (Spotify-style), pushing the art in to make room.
+    /// that slides in on hover (Spotify-style), pushing the art in to make room.
     private var leftRail: some View {
         VStack(spacing: 3) {
             TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
@@ -404,7 +405,11 @@ private struct ExpandedBar: View {
             if mode != .mini { DotDragHandle(window: window) }
             Spacer(minLength: 0)
         }
-        .frame(width: 16, height: 42, alignment: .top)
+        .frame(width: chrome ? 16 : 0, height: 42, alignment: .top)
+        .padding(.trailing, chrome ? 6 : 0)
+        .opacity(chrome ? 1 : 0)
+        .clipped()
+        .allowsHitTesting(chrome)
     }
 
     private var artwork: some View {
@@ -431,6 +436,9 @@ private struct ExpandedBar: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .contentShape(Rectangle())
+                .onTapGesture { window.toggleTranscript() }
+                .help(window.showTranscript ? "Hide full text" : "Show full text")
 
             if mode != .mini { SubtitleLink(engine: engine) }
         }
