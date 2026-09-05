@@ -16,19 +16,23 @@ final class BubbleWindow: ObservableObject {
     /// User-draggable width of the expanded mini-player. Drives which controls
     /// stay visible (see ExpandedBar.mode). Persisted across launches.
     @Published var barWidth: CGFloat = UserDefaults.standard.object(forKey: BubbleWindow.widthKey) as? Double ?? 384
+    /// User-draggable height of the expanded mini-player (corner resize).
+    @Published var barHeight: CGFloat = UserDefaults.standard.object(forKey: BubbleWindow.heightKey) as? Double ?? 72
 
     private var panel: NSPanel?
     private var dragStartOrigin: NSPoint?
-    private var resizeStartWidth: CGFloat?
+    private var resizeStartFrame: NSRect?
 
     private let minSize = NSSize(width: 56, height: 56)
-    private let barHeight: CGFloat = 72
     let minBarWidth: CGFloat = 148
     let maxBarWidth: CGFloat = 480
+    let minBarHeight: CGFloat = 46
+    let maxBarHeight: CGFloat = 108
     private let transcriptSize = NSSize(width: 420, height: 320)
     private let screenMargin: CGFloat = 20
     private static let positionKey = "SpeakIt.bubblePosition"
     private static let widthKey = "SpeakIt.barWidth"
+    private static let heightKey = "SpeakIt.barHeight"
 
     func show() {
         if panel == nil { createPanel() }
@@ -67,21 +71,30 @@ final class BubbleWindow: ObservableObject {
         return NSSize(width: barWidth, height: barHeight)
     }
 
-    // MARK: Resize (expanded mini-player width)
+    // MARK: Resize (expanded mini-player, corner drag → width + height)
 
-    func beginResize() { resizeStartWidth = barWidth }
+    func beginResize() { resizeStartFrame = panel?.frame }
 
-    func updateResize(translation: CGFloat) {
-        let base = resizeStartWidth ?? barWidth
-        let w = min(maxBarWidth, max(minBarWidth, base + translation))
-        guard abs(w - barWidth) > 0.5 else { return }
+    /// Corner drag. `dw`/`dh` are SwiftUI translation (dh positive = downward).
+    /// The top-left corner stays put: width grows to the right, height grows
+    /// downward (so the panel's visual top edge doesn't jump).
+    func updateResize(dw: CGFloat, dh: CGFloat) {
+        guard let panel, let start = resizeStartFrame else { return }
+        let w = min(maxBarWidth, max(minBarWidth, start.width + dw))
+        let h = min(maxBarHeight, max(minBarHeight, start.height + dh))
+        var f = start
+        f.size = NSSize(width: w, height: h)
+        f.origin.y = start.origin.y + (start.height - h)
+        panel.setFrame(f, display: true)
         barWidth = w
-        if expanded && !showTranscript { applySize(animated: false) }
+        barHeight = h
     }
 
     func endResize() {
-        resizeStartWidth = nil
+        resizeStartFrame = nil
         UserDefaults.standard.set(Double(barWidth), forKey: Self.widthKey)
+        UserDefaults.standard.set(Double(barHeight), forKey: Self.heightKey)
+        savePosition()
     }
 
     // MARK: Drag
@@ -312,8 +325,10 @@ private struct ExpandedBar: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
-        .overlay(alignment: .topLeading) { if !embedded { CloseDot(action: onClose) } }
-        .overlay(alignment: .trailing) { if !embedded { ResizeHandle(window: window) } }
+        .overlay(alignment: .topLeading) {
+            if !embedded { WindowControls(onClose: onClose, onMinimize: onCollapse) }
+        }
+        .overlay(alignment: .bottomTrailing) { if !embedded { ResizeHandle(window: window) } }
         .overlay {
             if !embedded {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -350,8 +365,8 @@ private struct ExpandedBar: View {
 
             controls
         }
-        .padding(.leading, showGrip ? 10 : 12)
-        .padding(.trailing, mode == .mini ? 10 : 14)
+        .padding(.leading, showGrip ? 6 : 8)
+        .padding(.trailing, mode == .mini ? 8 : 14)
         .padding(.top, 2)
         .padding(.bottom, showBottomSeek ? 4 : 2)
     }
@@ -367,7 +382,7 @@ private struct ExpandedBar: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(nowReading)
+            Text(mode == .mini ? voiceName : nowReading)
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
@@ -376,6 +391,16 @@ private struct ExpandedBar: View {
             if mode != .mini { SubtitleLink(engine: engine) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The active provider's selected voice (shown in mini mode where the full
+    /// sentence won't fit). Falls back to the provider name, then a label.
+    private var voiceName: String {
+        if let p = engine.activeProvider, let vid = engine.selectedVoiceId,
+           let v = p.availableVoices.first(where: { $0.id == vid }) {
+            return v.name
+        }
+        return engine.activeProvider?.displayName ?? "SpeakIt"
     }
 
     private var controls: some View {
@@ -568,7 +593,7 @@ private struct MicrosoftSquares: View {
     }
 }
 
-/// Right-edge grip: drag to resize the mini-player width.
+/// Bottom-right corner grip: drag to resize the mini-player (width + height).
 private struct ResizeHandle: View {
     @ObservedObject var window: BubbleWindow
     @State private var dragging = false
@@ -577,24 +602,25 @@ private struct ResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(.clear)
-            .frame(width: 12)
-            .overlay(
-                Capsule()
-                    .fill(.white.opacity(hovering || dragging ? 0.45 : 0.16))
-                    .frame(width: 2, height: 16)
-                    .padding(.trailing, 3),
-                alignment: .trailing
-            )
+            .frame(width: 16, height: 16)
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "line.diagonal")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(.white.opacity(hovering || dragging ? 0.5 : 0.18))
+                    .rotationEffect(.degrees(90))
+                    .padding(.trailing, 3)
+                    .padding(.bottom, 2)
+            }
             .contentShape(Rectangle())
             .onHover { inside in
                 hovering = inside
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                if inside { NSCursor.crosshair.push() } else { NSCursor.pop() }
             }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { v in
                         if !dragging { window.beginResize(); dragging = true }
-                        window.updateResize(translation: v.translation.width)
+                        window.updateResize(dw: v.translation.width, dh: v.translation.height)
                     }
                     .onEnded { _ in dragging = false; window.endResize() }
             )
@@ -694,27 +720,47 @@ private struct DotDragHandle: View {
     }
 }
 
-/// Red close dot in the top-left corner (reveals an ✕ on hover).
-private struct CloseDot: View {
+/// macOS-traffic-light control cluster in the top-left corner: red closes the
+/// player, amber collapses it back to the circular micro view.
+private struct WindowControls: View {
+    let onClose: () -> Void
+    let onMinimize: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                       symbol: "xmark", help: "Close player", action: onClose)
+            TrafficDot(color: Color(red: 0.99, green: 0.74, blue: 0.20),
+                       symbol: "minus", help: "Minimize to circle", action: onMinimize)
+        }
+        .padding(.leading, 6)
+        .padding(.top, 5)
+    }
+}
+
+/// One traffic-light dot: colored circle that reveals its glyph on hover.
+private struct TrafficDot: View {
+    let color: Color
+    let symbol: String
+    let help: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Circle()
-                .fill(Color(red: 0.98, green: 0.35, blue: 0.33))
+                .fill(color)
                 .frame(width: 11, height: 11)
                 .overlay(
-                    Image(systemName: "xmark")
+                    Image(systemName: symbol)
                         .font(.system(size: 6, weight: .black))
-                        .foregroundStyle(.black.opacity(0.55))
+                        .foregroundStyle(.black.opacity(0.6))
                         .opacity(hovering ? 1 : 0)
                 )
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .padding(7)
-        .help("Close player")
+        .help(help)
     }
 }
 
@@ -729,7 +775,8 @@ private struct TranscriptPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                CloseDot(action: onClose)
+                TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                           symbol: "xmark", help: "Close player", action: onClose)
                 Text(engine.currentTitle.isEmpty ? "SpeakIt" : engine.currentTitle)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
