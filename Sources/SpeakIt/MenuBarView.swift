@@ -367,31 +367,47 @@ private struct LocalServerSection: View {
                 .padding(.leading, 2)
             }
 
-            Picker(selection: $server.bindMode) {
-                ForEach(LocalFileServer.BindMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+            // Bind mode and the Tailscale switch share a line. The switch only
+            // applies to the tailnet mode sitting next to it, so splitting them
+            // across two rows spent a line on a relationship the layout can
+            // just show.
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Which interfaces the server listens on")
+
+                Picker(selection: $server.bindMode) {
+                    ForEach(LocalFileServer.BindMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                } label: {
+                    EmptyView()
                 }
-            } label: {
-                Label("Bind", systemImage: "network")
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .labelsHidden()
+
+                if server.bindMode == .tailnet {
+                    Spacer(minLength: 0)
+                    BrandLabel(title: "", bundleIDs: BrandIcon.Brand.tailscale,
+                               symbol: "lock.shield", size: 13)
+                        .labelStyle(.iconOnly)
+                    Toggle(isOn: $server.tailscaleHTTPS) { EmptyView() }
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                        .help("Serve over the tailnet on the Tailscale HTTPS proxy, port 443")
+                }
             }
-            .pickerStyle(.menu)
-            .controlSize(.small)
             .padding(.top, 2)
 
-            if server.bindMode == .tailnet {
-                Toggle(isOn: $server.tailscaleHTTPS) {
-                    BrandLabel(title: "Tailscale HTTPS",
-                               bundleIDs: BrandIcon.Brand.tailscale, symbol: "lock.shield")
-                }
-                .help("Serve over the tailnet on the HTTPS proxy, port 443")
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                if let err = server.lastTailscaleError, !err.isEmpty {
-                    Text(err)
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if server.bindMode == .tailnet,
+               let err = server.lastTailscaleError, !err.isEmpty {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if server.isRunning && server.bindMode != .localhost {
