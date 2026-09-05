@@ -235,10 +235,17 @@ struct MenuBarView: View {
                 } label: {
                     // The gear alone. A chevron beside it said the same thing
                     // twice, and what a click does is discoverable by clicking.
-                    Label("Settings", systemImage: "gearshape")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle())
+                    // Filled and a size up: it is the only affordance left on
+                    // this row, so it carries the whole hit target and should
+                    // not read as fine print.
+                    HStack(spacing: 5) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Settings")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(settingsExpanded ? "Hide settings" : "Show settings")
