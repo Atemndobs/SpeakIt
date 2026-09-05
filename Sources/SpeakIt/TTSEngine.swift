@@ -48,6 +48,7 @@ final class TTSEngine: ObservableObject {
     private init() {
         let av = AVSpeechProvider()
         let edge = EdgeTTSProvider()
+        let eleven = ElevenLabsProvider()
 
         // --- Step 1: initialize ALL stored properties before referencing self ---
         let defaults = UserDefaults.standard
@@ -55,7 +56,13 @@ final class TTSEngine: ObservableObject {
         // NSNumber<->Float bridging can return nil unexpectedly; round-trip via Double.
         let hasStoredRate = defaults.object(forKey: Keys.rate) != nil
         let storedRate: Float? = hasStoredRate ? Float(defaults.double(forKey: Keys.rate)) : nil
-        let active: TTSProvider = (provider == edge.id) ? edge : av
+        let active: TTSProvider = {
+            switch provider {
+            case edge.id: return edge
+            case eleven.id: return eleven
+            default: return av
+            }
+        }()
         let storedVoice = defaults.string(forKey: Self.voiceKey(for: provider))
 
         let resolvedVoiceId: String? = {
@@ -69,7 +76,7 @@ final class TTSEngine: ObservableObject {
             return Self.bestDefaultVoiceId(for: active)
         }()
 
-        self.providers = [av, edge]
+        self.providers = [av, edge, eleven]
         self.activeProviderId = provider
         self.rate = storedRate ?? AVSpeechUtteranceDefaultSpeechRate
         self.selectedVoiceId = resolvedVoiceId
@@ -90,9 +97,32 @@ final class TTSEngine: ObservableObject {
         edge.onStateChange = stateHandler
         edge.onProgress = progressHandler
         edge.onHighlight = highlightHandler
+        eleven.onStateChange = stateHandler
+        eleven.onProgress = progressHandler
+        eleven.onHighlight = highlightHandler
     }
 
     var activeProvider: TTSProvider? { providers.first { $0.id == activeProviderId } }
+
+    /// Typed handle for the settings panel, which needs the key and quota
+    /// affordances that only this provider has.
+    var elevenLabs: ElevenLabsProvider? {
+        providers.first { $0.id == "elevenlabs" } as? ElevenLabsProvider
+    }
+
+    /// Re-read the ElevenLabs catalogue and make sure a voice is selected.
+    /// Called after the key changes, when the picker would otherwise stay empty
+    /// until the next launch.
+    func reloadElevenLabsVoices() async {
+        guard let provider = elevenLabs else { return }
+        await provider.refreshVoices()
+        await provider.refreshSubscription()
+        guard activeProviderId == provider.id else { return }
+        let voices = provider.availableVoices
+        if let current = selectedVoiceId, voices.contains(where: { $0.id == current }) { return }
+        selectedVoiceId = voices.first?.id
+        objectWillChange.send()
+    }
 
     func switchProvider(to providerId: String) {
         activeProvider?.stop()
@@ -100,7 +130,12 @@ final class TTSEngine: ObservableObject {
         guard let p = activeProvider else { return }
         // Prefer the voice the user last picked for this provider; else best default
         let stored = UserDefaults.standard.string(forKey: voiceKey(for: providerId))
-        if let stored, p.availableVoices.contains(where: { $0.id == stored }) {
+        // ElevenLabs voices load from the network, so the cache may still be
+        // empty here. Keep the stored id rather than resetting the user's
+        // choice to nil every launch before the catalogue arrives.
+        if providerId == "elevenlabs", let stored, p.availableVoices.isEmpty {
+            selectedVoiceId = stored
+        } else if let stored, p.availableVoices.contains(where: { $0.id == stored }) {
             selectedVoiceId = stored
         } else if providerId == "edge-tts",
                   p.availableVoices.contains(where: { $0.id == Self.defaultEdgeVoice }) {

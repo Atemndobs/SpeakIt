@@ -1,3 +1,4 @@
+import ElevenLabsKit
 import SwiftUI
 import AVFoundation
 import KeyboardShortcuts
@@ -63,6 +64,10 @@ struct MenuBarView: View {
                     }
                 }
                 .pickerStyle(.menu)
+            }
+
+            if engine.activeProviderId == "elevenlabs", let eleven = engine.elevenLabs {
+                ElevenLabsSection(engine: engine, provider: eleven)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -230,6 +235,122 @@ private struct LocalServerSection: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// ElevenLabs credential and quota panel.
+///
+/// Only shown when ElevenLabs is the active engine. Unlike the Apple and Edge
+/// providers this one needs a credential and has a metered quota, so both are
+/// surfaced here rather than failing silently at playback time.
+private struct ElevenLabsSection: View {
+    @ObservedObject var engine: TTSEngine
+    let provider: ElevenLabsProvider
+
+    @State private var keyInput: String = ""
+    @State private var status: String?
+    @State private var isError = false
+    @State private var busy = false
+    @State private var storedMask: String? = ElevenLabsCredentials.shared.maskedKey
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("ElevenLabs").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if storedMask != nil {
+                    Circle().fill(isError ? .orange : .green).frame(width: 6, height: 6)
+                }
+            }
+
+            if let storedMask {
+                HStack(spacing: 6) {
+                    Text("Key \(storedMask)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Remove") { removeKey() }
+                        .controlSize(.small)
+                        .disabled(busy)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("API key (stored in Keychain)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    SecureField("xi-...", text: $keyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .onSubmit { saveKey() }
+                }
+            }
+
+            HStack(spacing: 6) {
+                if storedMask == nil {
+                    Button("Save key") { saveKey() }
+                        .controlSize(.small)
+                        .disabled(busy || keyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } else {
+                    Button("Refresh voices") { refresh() }
+                        .controlSize(.small)
+                        .disabled(busy)
+                }
+                if busy { ProgressView().controlSize(.small) }
+                Spacer()
+            }
+
+            if let status {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(isError ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .task {
+            // Populate the quota line on first open without blocking the menu.
+            if storedMask != nil, status == nil { refresh() }
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard ElevenLabsCredentials.shared.store(trimmed) else {
+            status = "Could not write to the Keychain."
+            isError = true
+            return
+        }
+        keyInput = ""
+        storedMask = ElevenLabsCredentials.shared.maskedKey
+        refresh()
+    }
+
+    private func removeKey() {
+        ElevenLabsCredentials.shared.delete()
+        storedMask = nil
+        status = nil
+        isError = false
+        Task { await engine.reloadElevenLabsVoices() }
+    }
+
+    /// Validate the key, load the catalogue and show the remaining quota.
+    private func refresh() {
+        busy = true
+        status = nil
+        Task {
+            await engine.reloadElevenLabsVoices()
+            busy = false
+            if let error = provider.lastError {
+                status = error
+                isError = true
+            } else {
+                let count = provider.availableVoices.count
+                let quota = provider.subscriptionSummary
+                status = [quota, "\(count) voice\(count == 1 ? "" : "s")"]
+                    .compactMap { $0 }
+                    .joined(separator: " · ")
+                isError = false
             }
         }
     }
