@@ -233,14 +233,12 @@ struct MenuBarView: View {
                 Button {
                     settingsExpanded.toggle()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: settingsExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                        Label("Settings", systemImage: "gearshape")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
+                    // The gear alone. A chevron beside it said the same thing
+                    // twice, and what a click does is discoverable by clicking.
+                    Label("Settings", systemImage: "gearshape")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(settingsExpanded ? "Hide settings" : "Show settings")
