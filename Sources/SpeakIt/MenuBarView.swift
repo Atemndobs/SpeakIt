@@ -2,6 +2,7 @@ import ElevenLabsKit
 import SwiftUI
 import AVFoundation
 import KeyboardShortcuts
+import UniformTypeIdentifiers
 
 struct MenuBarView: View {
     @EnvironmentObject var engine: TTSEngine
@@ -64,6 +65,24 @@ struct MenuBarView: View {
                     }
                 }
                 .pickerStyle(.menu)
+
+                HStack(spacing: 6) {
+                    Button {
+                        pickAvatarForCurrentVoice()
+                    } label: {
+                        Label("Set voice avatar…", systemImage: "person.crop.circle.badge.plus")
+                    }
+                    .controlSize(.small)
+                    .disabled(engine.selectedVoiceId == nil)
+
+                    Button {
+                        NSWorkspace.shared.open(VoiceAvatarStore.shared.directory)
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .controlSize(.small)
+                    .help("Open the avatars folder")
+                }
             }
 
             if engine.activeProviderId == "elevenlabs", let eleven = engine.elevenLabs {
@@ -145,6 +164,20 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    /// Pick an image and install it as the avatar for the current voice.
+    private func pickAvatarForCurrentVoice() {
+        guard let voiceId = engine.selectedVoiceId else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Use as avatar"
+        panel.message = "Choose an image for this voice"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? VoiceAvatarStore.shared.install(
+            from: url, providerId: engine.activeProviderId, voiceId: voiceId)
     }
 }
 

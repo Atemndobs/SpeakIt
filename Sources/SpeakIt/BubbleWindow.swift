@@ -16,19 +16,23 @@ final class BubbleWindow: ObservableObject {
     /// User-draggable width of the expanded mini-player. Drives which controls
     /// stay visible (see ExpandedBar.mode). Persisted across launches.
     @Published var barWidth: CGFloat = UserDefaults.standard.object(forKey: BubbleWindow.widthKey) as? Double ?? 384
+    /// User-draggable height of the expanded mini-player (corner resize).
+    @Published var barHeight: CGFloat = UserDefaults.standard.object(forKey: BubbleWindow.heightKey) as? Double ?? 72
 
     private var panel: NSPanel?
     private var dragStartOrigin: NSPoint?
-    private var resizeStartWidth: CGFloat?
+    private var resizeStartFrame: NSRect?
 
     private let minSize = NSSize(width: 56, height: 56)
-    private let barHeight: CGFloat = 72
     let minBarWidth: CGFloat = 148
     let maxBarWidth: CGFloat = 480
+    let minBarHeight: CGFloat = 46
+    let maxBarHeight: CGFloat = 108
     private let transcriptSize = NSSize(width: 420, height: 320)
     private let screenMargin: CGFloat = 20
     private static let positionKey = "SpeakIt.bubblePosition"
     private static let widthKey = "SpeakIt.barWidth"
+    private static let heightKey = "SpeakIt.barHeight"
 
     func show() {
         if panel == nil { createPanel() }
@@ -67,21 +71,30 @@ final class BubbleWindow: ObservableObject {
         return NSSize(width: barWidth, height: barHeight)
     }
 
-    // MARK: Resize (expanded mini-player width)
+    // MARK: Resize (expanded mini-player, corner drag → width + height)
 
-    func beginResize() { resizeStartWidth = barWidth }
+    func beginResize() { resizeStartFrame = panel?.frame }
 
-    func updateResize(translation: CGFloat) {
-        let base = resizeStartWidth ?? barWidth
-        let w = min(maxBarWidth, max(minBarWidth, base + translation))
-        guard abs(w - barWidth) > 0.5 else { return }
+    /// Corner drag. `dw`/`dh` are SwiftUI translation (dh positive = downward).
+    /// The top-left corner stays put: width grows to the right, height grows
+    /// downward (so the panel's visual top edge doesn't jump).
+    func updateResize(dw: CGFloat, dh: CGFloat) {
+        guard let panel, let start = resizeStartFrame else { return }
+        let w = min(maxBarWidth, max(minBarWidth, start.width + dw))
+        let h = min(maxBarHeight, max(minBarHeight, start.height + dh))
+        var f = start
+        f.size = NSSize(width: w, height: h)
+        f.origin.y = start.origin.y + (start.height - h)
+        panel.setFrame(f, display: true)
         barWidth = w
-        if expanded && !showTranscript { applySize(animated: false) }
+        barHeight = h
     }
 
     func endResize() {
-        resizeStartWidth = nil
+        resizeStartFrame = nil
         UserDefaults.standard.set(Double(barWidth), forKey: Self.widthKey)
+        UserDefaults.standard.set(Double(barHeight), forKey: Self.heightKey)
+        savePosition()
     }
 
     // MARK: Drag
@@ -204,36 +217,50 @@ private struct CircleBadge: View {
     let onClose: () -> Void
 
     @State private var dragging = false
+    @State private var hovering = false
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(.regularMaterial)
+            // The source's provider logo fills the circle (a future per-voice
+            // avatar image would slot in here). Progress rings sit on top.
+            ProviderArtwork(providerId: engine.activeProviderId,
+                            voiceId: engine.selectedVoiceId, active: false, size: 40)
+                .clipShape(Circle())
 
             Circle()
-                .stroke(.white.opacity(0.12), lineWidth: 3)
+                .stroke(.black.opacity(0.35), lineWidth: 3)
                 .padding(4)
 
             Circle()
                 .trim(from: 0, to: max(0, min(1, engine.progress)))
                 .stroke(
-                    Color.accentColor,
+                    Color.white,
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
                 .padding(4)
                 .animation(.linear(duration: 0.12), value: engine.progress)
 
-            Image(systemName: stateIcon)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.primary)
+            // Hover reveals that tapping opens the full player.
+            if hovering {
+                Circle().fill(.black.opacity(0.45)).frame(width: 40, height: 40)
+                Image(systemName: "arrow.up.backward.and.arrow.down.forward")
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(.white)
+            } else if engine.isPaused {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 1)
+            }
         }
         .frame(width: 48, height: 48)
         .padding(4)
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
         .contentShape(Circle())
-        .help(engine.currentTitle.isEmpty ? "SpeakIt" : "Reading: \(engine.currentTitle)")
+        .help(engine.currentTitle.isEmpty ? "SpeakIt — click for full player" : "Reading: \(engine.currentTitle) — click for full player")
         .onTapGesture { onExpand() }
+        .onHover { hovering = $0 }
         .simultaneousGesture(dragGesture)
         .contextMenu {
             Button("Expand") { onExpand() }
@@ -258,11 +285,6 @@ private struct CircleBadge: View {
             }
     }
 
-    private var stateIcon: String {
-        if engine.isPaused { return "play.fill" }
-        if engine.isSpeaking { return "waveform" }
-        return "play.fill"
-    }
 }
 
 /// Spotify-mini-player-style transport card, resizable by dragging the right
@@ -283,6 +305,7 @@ private struct ExpandedBar: View {
     var embedded: Bool = false
 
     @State private var dragging = false
+    @State private var hovering = false
 
     private enum Mode { case full, compact, mini }
     private var mode: Mode {
@@ -293,13 +316,18 @@ private struct ExpandedBar: View {
         return .full
     }
 
+    // Spotify hides its chrome at rest and reveals it on hover. The window
+    // controls, drag grip and resize corner all live under `chrome`; play/pause
+    // stays visible in mini (it also carries the progress ring), otherwise it
+    // hides too so the resting card is just art + text + a thin progress line.
+    private var chrome: Bool { embedded || hovering }
     private var enabled: Bool { engine.isSpeaking || engine.isPaused }
-    private var showGrip: Bool { mode == .full }
-    private var showPrev: Bool { mode == .full }
+    private var showPrev: Bool { mode == .full && chrome }
+    private var showPlay: Bool { chrome || mode == .mini }
     private var showBottomSeek: Bool { mode != .mini }
     private var ringProgress: Bool { mode == .mini }
     private var showMeta: Bool { mode != .mini || window.barWidth >= 176 }
-    private var showNext: Bool { mode != .mini || window.barWidth >= 176 }
+    private var showNext: Bool { chrome && (mode != .mini || window.barWidth >= 176) }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -312,8 +340,19 @@ private struct ExpandedBar: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
-        .overlay(alignment: .topLeading) { if !embedded { CloseDot(action: onClose) } }
-        .overlay(alignment: .trailing) { if !embedded { ResizeHandle(window: window) } }
+        .overlay(alignment: .topTrailing) {
+            if !embedded {
+                TrafficDot(color: .white, glass: true,
+                           symbol: "minus", help: "Minimize to circle", action: onCollapse)
+                    .padding(.trailing, 6).padding(.top, 5)
+                    .opacity(chrome ? 1 : 0)
+                    .allowsHitTesting(chrome)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            // Resize grip stays visible (faint) so enlarging is never "lost".
+            if !embedded { ResizeHandle(window: window) }
+        }
         .overlay {
             if !embedded {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -322,6 +361,8 @@ private struct ExpandedBar: View {
         }
         .shadow(color: embedded ? .clear : .black.opacity(0.35), radius: 10, y: 4)
         .padding(embedded ? 0 : 2)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .contextMenu {
             Button(window.showTranscript ? "Hide Transcript" : "Show Transcript") { window.toggleTranscript() }
             Button("Minimize") { onCollapse() }
@@ -332,28 +373,51 @@ private struct ExpandedBar: View {
     }
 
     private var content: some View {
-        HStack(spacing: mode == .mini ? 8 : 10) {
-            if showGrip { DotDragHandle(window: window) }
+        HStack(spacing: 0) {
+            // Left rail (red close dot + drag grip). Its width animates from 0
+            // at rest to 16 on hover, so the album art slides in from the flush
+            // left border instead of jumping.
+            if !embedded { leftRail }
 
-            // Art + text double as a drag surface once the grip is gone.
+            // Art + text double as the drag surface.
             HStack(spacing: mode == .mini ? 8 : 10) {
-                ProviderArtwork(providerId: engine.activeProviderId,
-                                active: engine.isSpeaking && !engine.isPaused)
-                    .onTapGesture { window.toggleTranscript() }
-                    .help(providerHelp)
-
+                artwork
                 if showMeta { titleBlock }
             }
             .simultaneousGesture(windowDrag)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
 
             controls
         }
-        .padding(.leading, showGrip ? 10 : 12)
-        .padding(.trailing, mode == .mini ? 10 : 14)
+        .padding(.leading, 5)
+        .padding(.trailing, mode == .mini ? 8 : 14)
         .padding(.top, 2)
         .padding(.bottom, showBottomSeek ? 4 : 2)
+    }
+
+    /// Red close dot on top, the six-dot drag grip below it — the left rail
+    /// that slides in on hover (Spotify-style), pushing the art in to make room.
+    private var leftRail: some View {
+        VStack(spacing: 3) {
+            TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                       symbol: "xmark", help: "Close player", action: onClose)
+            if mode != .mini { DotDragHandle(window: window) }
+            Spacer(minLength: 0)
+        }
+        .frame(width: chrome ? 16 : 0, height: 42, alignment: .top)
+        .padding(.trailing, chrome ? 6 : 0)
+        .opacity(chrome ? 1 : 0)
+        .clipped()
+        .allowsHitTesting(chrome)
+    }
+
+    private var artwork: some View {
+        ProviderArtwork(providerId: engine.activeProviderId,
+                        voiceId: engine.selectedVoiceId,
+                        active: engine.isSpeaking && !engine.isPaused)
+            .onTapGesture { window.toggleTranscript() }
+            .help(providerHelp)
     }
 
     private var windowDrag: some Gesture {
@@ -367,15 +431,28 @@ private struct ExpandedBar: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(nowReading)
+            Text(mode == .mini ? voiceName : nowReading)
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .contentShape(Rectangle())
+                .onTapGesture { window.toggleTranscript() }
+                .help(window.showTranscript ? "Hide full text" : "Show full text")
 
             if mode != .mini { SubtitleLink(engine: engine) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The active provider's selected voice (shown in mini mode where the full
+    /// sentence won't fit). Falls back to the provider name, then a label.
+    private var voiceName: String {
+        if let p = engine.activeProvider, let vid = engine.selectedVoiceId,
+           let v = p.availableVoices.first(where: { $0.id == vid }) {
+            return v.name
+        }
+        return engine.activeProvider?.displayName ?? "SpeakIt"
     }
 
     private var controls: some View {
@@ -392,7 +469,7 @@ private struct ExpandedBar: View {
                 .help("Previous sentence")
             }
 
-            PlayButton(engine: engine, showRing: ringProgress)
+            if showPlay { PlayButton(engine: engine, showRing: ringProgress) }
 
             if showNext {
                 Button { engine.nextChunk() } label: {
@@ -475,17 +552,23 @@ private struct PlayButton: View {
 /// at a glance which engine is speaking (ElevenLabs, Apple, Microsoft Edge).
 private struct ProviderArtwork: View {
     let providerId: String
+    var voiceId: String? = nil
     let active: Bool
+    var size: CGFloat = 42
+
+    @ObservedObject private var avatars = VoiceAvatarStore.shared
+
+    private var corner: CGFloat { size * (8.0 / 42.0) }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: corner, style: .continuous)
             .fill(background)
-            .overlay(mark)
+            .overlay { face }
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
             )
-            .frame(width: 42, height: 42)
+            .frame(width: size, height: size)
             .overlay(alignment: .bottomTrailing) {
                 if active {
                     Image(systemName: "waveform")
@@ -499,6 +582,19 @@ private struct ProviderArtwork: View {
             }
     }
 
+    /// A per-voice avatar image if one exists, otherwise the provider logo.
+    @ViewBuilder private var face: some View {
+        if let img = avatars.image(providerId: providerId, voiceId: voiceId) {
+            Image(nsImage: img)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        } else {
+            mark
+        }
+    }
+
     private var background: AnyShapeStyle {
         switch providerId {
         case "elevenlabs":
@@ -508,11 +604,14 @@ private struct ProviderArtwork: View {
                 colors: [Color(white: 0.30), Color(white: 0.10)],
                 startPoint: .top, endPoint: .bottom))
         case "edge-tts":
-            return AnyShapeStyle(Color(white: 0.96))
-        case "kokoro":
+            // Dark glass tile so the Microsoft mark fits the player's design.
             return AnyShapeStyle(LinearGradient(
-                colors: [Color(red: 0.92, green: 0.36, blue: 0.56),
-                         Color(red: 0.55, green: 0.15, blue: 0.42)],
+                colors: [Color(white: 0.24), Color(white: 0.11)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
+        case "kokoro":
+            // Dark tile so the orange Kokoro logo reads clearly.
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.20), Color(white: 0.07)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
         default:
             let hue = Double(abs(providerId.hashValue) % 360) / 360.0
@@ -538,10 +637,13 @@ private struct ProviderArtwork: View {
         case "edge-tts":
             MicrosoftSquares()
         case "kokoro":
-            // Kokoro (心 — "heart"): a heart mark for the local neural voice.
-            Image(systemName: "heart.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
+            if let logo = BundledImage.image("kokoro-logo") {
+                Image(nsImage: logo).resizable().scaledToFit().padding(5)
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.96, green: 0.49, blue: 0.12))
+            }
         default:
             Image(systemName: "waveform")
                 .font(.system(size: 15, weight: .semibold))
@@ -550,25 +652,45 @@ private struct ProviderArtwork: View {
     }
 }
 
-/// The four-square Microsoft mark, drawn (no bundled asset needed).
+/// The four-square Microsoft mark, drawn (no bundled asset needed) in a glassy
+/// style: each tile is a soft top-to-bottom gradient with a diagonal sheen
+/// across the block, so it reads as frosted glass on the dark card.
 private struct MicrosoftSquares: View {
     private let s: CGFloat = 9
-    private let g: CGFloat = 2
+    private let g: CGFloat = 2.5
+
+    private func tile(_ c: Color) -> some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .fill(LinearGradient(colors: [c.opacity(0.98), c.opacity(0.78)],
+                                 startPoint: .top, endPoint: .bottom))
+            .frame(width: s, height: s)
+            .overlay(
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+            )
+    }
+
     var body: some View {
         VStack(spacing: g) {
             HStack(spacing: g) {
-                Rectangle().fill(Color(red: 0.95, green: 0.33, blue: 0.15)).frame(width: s, height: s)
-                Rectangle().fill(Color(red: 0.51, green: 0.74, blue: 0.02)).frame(width: s, height: s)
+                tile(Color(red: 0.95, green: 0.33, blue: 0.15))
+                tile(Color(red: 0.51, green: 0.74, blue: 0.02))
             }
             HStack(spacing: g) {
-                Rectangle().fill(Color(red: 0.02, green: 0.65, blue: 0.94)).frame(width: s, height: s)
-                Rectangle().fill(Color(red: 1.00, green: 0.73, blue: 0.03)).frame(width: s, height: s)
+                tile(Color(red: 0.02, green: 0.65, blue: 0.94))
+                tile(Color(red: 1.00, green: 0.73, blue: 0.03))
             }
         }
+        .overlay(
+            LinearGradient(colors: [.white.opacity(0.45), .clear],
+                           startPoint: .topLeading, endPoint: .center)
+                .blendMode(.plusLighter)
+                .allowsHitTesting(false)
+        )
     }
 }
 
-/// Right-edge grip: drag to resize the mini-player width.
+/// Bottom-right corner grip: drag to resize the mini-player (width + height).
 private struct ResizeHandle: View {
     @ObservedObject var window: BubbleWindow
     @State private var dragging = false
@@ -577,24 +699,25 @@ private struct ResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(.clear)
-            .frame(width: 12)
-            .overlay(
-                Capsule()
-                    .fill(.white.opacity(hovering || dragging ? 0.45 : 0.16))
-                    .frame(width: 2, height: 16)
-                    .padding(.trailing, 3),
-                alignment: .trailing
-            )
+            .frame(width: 16, height: 16)
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "line.diagonal")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(.white.opacity(hovering || dragging ? 0.5 : 0.18))
+                    .rotationEffect(.degrees(90))
+                    .padding(.trailing, 3)
+                    .padding(.bottom, 2)
+            }
             .contentShape(Rectangle())
             .onHover { inside in
                 hovering = inside
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                if inside { NSCursor.crosshair.push() } else { NSCursor.pop() }
             }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { v in
                         if !dragging { window.beginResize(); dragging = true }
-                        window.updateResize(translation: v.translation.width)
+                        window.updateResize(dw: v.translation.width, dh: v.translation.height)
                     }
                     .onEnded { _ in dragging = false; window.endResize() }
             )
@@ -666,18 +789,19 @@ private struct SeekBar: View {
 }
 
 /// Six-dot drag handle (2×3), the Spotify-style grip. Moves the whole window.
+/// Six-dot drag grip (2×3), the Spotify-style handle. Moves the whole window.
 private struct DotDragHandle: View {
     @ObservedObject var window: BubbleWindow
     @State private var dragging = false
     @State private var hovering = false
 
     var body: some View {
-        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.35)).frame(width: 2.5, height: 2.5)
-        HStack(spacing: 3) {
-            VStack(spacing: 3) { dot; dot; dot }
-            VStack(spacing: 3) { dot; dot; dot }
+        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.4)).frame(width: 2.5, height: 2.5)
+        HStack(spacing: 2.5) {
+            VStack(spacing: 2.5) { dot; dot; dot }
+            VStack(spacing: 2.5) { dot; dot; dot }
         }
-        .frame(width: 18, height: 40)
+        .frame(width: 14, height: 24)
         .contentShape(Rectangle())
         .onHover { inside in
             hovering = inside
@@ -694,27 +818,36 @@ private struct DotDragHandle: View {
     }
 }
 
-/// Red close dot in the top-left corner (reveals an ✕ on hover).
-private struct CloseDot: View {
+/// One corner dot that reveals its glyph on hover. Solid (traffic-light) by
+/// default; `glass` renders a frosted translucent dot to match the card.
+private struct TrafficDot: View {
+    let color: Color
+    var glass: Bool = false
+    let symbol: String
+    let help: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Circle()
-                .fill(Color(red: 0.98, green: 0.35, blue: 0.33))
+                .fill(glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(color))
+                .overlay {
+                    if glass {
+                        Circle().strokeBorder(.white.opacity(0.55), lineWidth: 0.75)
+                    }
+                }
                 .frame(width: 11, height: 11)
                 .overlay(
-                    Image(systemName: "xmark")
+                    Image(systemName: symbol)
                         .font(.system(size: 6, weight: .black))
-                        .foregroundStyle(.black.opacity(0.55))
+                        .foregroundStyle(glass ? .white.opacity(0.9) : .black.opacity(0.6))
                         .opacity(hovering ? 1 : 0)
                 )
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .padding(7)
-        .help("Close player")
+        .help(help)
     }
 }
 
@@ -729,7 +862,8 @@ private struct TranscriptPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                CloseDot(action: onClose)
+                TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                           symbol: "xmark", help: "Close player", action: onClose)
                 Text(engine.currentTitle.isEmpty ? "SpeakIt" : engine.currentTitle)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
