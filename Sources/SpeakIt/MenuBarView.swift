@@ -61,7 +61,10 @@ struct MenuBarView: View {
             if let provider = engine.activeProvider {
                 Picker("Voice", selection: $engine.selectedVoiceId) {
                     ForEach(provider.availableVoices) { v in
-                        Text("\(v.name) — \(v.quality)").tag(Optional(v.id))
+                        // Middle dot, not a dash. Several voice names already
+                        // carry parentheses ("Ava (Multilingual)"), so a
+                        // parenthetical quality would nest awkwardly.
+                        Text("\(v.name) · \(v.quality)").tag(Optional(v.id))
                     }
                 }
                 .pickerStyle(.menu)
