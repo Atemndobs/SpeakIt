@@ -225,7 +225,40 @@ struct MenuBarView: View {
             // control is touched, not by what it belongs to: the things you
             // reach for mid-read stay above, everything you set when you first
             // installed the app lives here.
-            DisclosureGroup(isExpanded: $settingsExpanded) {
+            // Settings and Quit share the bottom row. The fold is a plain
+            // button rather than a DisclosureGroup so Quit can sit beside it;
+            // DisclosureGroup owns its whole row and would have cost another
+            // line plus a divider for one word.
+            HStack(spacing: 8) {
+                Button {
+                    settingsExpanded.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: settingsExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(settingsExpanded ? "Hide settings" : "Show settings")
+
+                Spacer(minLength: 0)
+
+                Button { NSApp.terminate(nil) } label: {
+                    Label("Quit", systemImage: "xmark.circle")
+                }
+                .controlSize(.small)
+                .keyboardShortcut("q")
+            }
+
+            // Set-once configuration. The split is by how often a control is
+            // touched, not by what it belongs to: the things you reach for
+            // mid-read stay above, everything you set when you first installed
+            // the app lives here.
+            if settingsExpanded {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Label("Hotkey", systemImage: "keyboard")
@@ -257,19 +290,8 @@ struct MenuBarView: View {
                         KokoroSection(provider: kokoro, variant: .statusOnly)
                     }
                 }
-                .padding(.top, 6)
-            } label: {
-                Label("Settings", systemImage: "gearshape")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .padding(.top, 4)
             }
-
-            Divider()
-
-            Button { NSApp.terminate(nil) } label: {
-                Label("Quit", systemImage: "xmark.circle")
-            }
-                .keyboardShortcut("q")
         }
         .padding(14)
         .frame(width: 320)
