@@ -217,36 +217,50 @@ private struct CircleBadge: View {
     let onClose: () -> Void
 
     @State private var dragging = false
+    @State private var hovering = false
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(.regularMaterial)
+            // The source's provider logo fills the circle (a future per-voice
+            // avatar image would slot in here). Progress rings sit on top.
+            ProviderArtwork(providerId: engine.activeProviderId, active: false)
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
 
             Circle()
-                .stroke(.white.opacity(0.12), lineWidth: 3)
+                .stroke(.black.opacity(0.35), lineWidth: 3)
                 .padding(4)
 
             Circle()
                 .trim(from: 0, to: max(0, min(1, engine.progress)))
                 .stroke(
-                    Color.accentColor,
+                    Color.white,
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
                 .padding(4)
                 .animation(.linear(duration: 0.12), value: engine.progress)
 
-            Image(systemName: stateIcon)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.primary)
+            // Hover reveals that tapping opens the full player.
+            if hovering {
+                Circle().fill(.black.opacity(0.45)).frame(width: 40, height: 40)
+                Image(systemName: "arrow.up.backward.and.arrow.down.forward")
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(.white)
+            } else if engine.isPaused {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 1)
+            }
         }
         .frame(width: 48, height: 48)
         .padding(4)
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
         .contentShape(Circle())
-        .help(engine.currentTitle.isEmpty ? "SpeakIt" : "Reading: \(engine.currentTitle)")
+        .help(engine.currentTitle.isEmpty ? "SpeakIt — click for full player" : "Reading: \(engine.currentTitle) — click for full player")
         .onTapGesture { onExpand() }
+        .onHover { hovering = $0 }
         .simultaneousGesture(dragGesture)
         .contextMenu {
             Button("Expand") { onExpand() }
@@ -271,11 +285,6 @@ private struct CircleBadge: View {
             }
     }
 
-    private var stateIcon: String {
-        if engine.isPaused { return "play.fill" }
-        if engine.isSpeaking { return "waveform" }
-        return "play.fill"
-    }
 }
 
 /// Spotify-mini-player-style transport card, resizable by dragging the right
@@ -296,6 +305,7 @@ private struct ExpandedBar: View {
     var embedded: Bool = false
 
     @State private var dragging = false
+    @State private var hovering = false
 
     private enum Mode { case full, compact, mini }
     private var mode: Mode {
@@ -306,13 +316,19 @@ private struct ExpandedBar: View {
         return .full
     }
 
+    // Spotify hides its chrome at rest and reveals it on hover. The window
+    // controls, drag grip and resize corner all live under `chrome`; play/pause
+    // stays visible in mini (it also carries the progress ring), otherwise it
+    // hides too so the resting card is just art + text + a thin progress line.
+    private var chrome: Bool { embedded || hovering }
     private var enabled: Bool { engine.isSpeaking || engine.isPaused }
-    private var showGrip: Bool { mode == .full }
-    private var showPrev: Bool { mode == .full }
+    private var showGrip: Bool { mode == .full && chrome }
+    private var showPrev: Bool { mode == .full && chrome }
+    private var showPlay: Bool { chrome || mode == .mini }
     private var showBottomSeek: Bool { mode != .mini }
     private var ringProgress: Bool { mode == .mini }
     private var showMeta: Bool { mode != .mini || window.barWidth >= 176 }
-    private var showNext: Bool { mode != .mini || window.barWidth >= 176 }
+    private var showNext: Bool { chrome && (mode != .mini || window.barWidth >= 176) }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -325,21 +341,19 @@ private struct ExpandedBar: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
-        .overlay(alignment: .topLeading) {
-            if !embedded {
-                TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
-                           symbol: "xmark", help: "Close player", action: onClose)
-                    .padding(.leading, 6).padding(.top, 5)
-            }
-        }
         .overlay(alignment: .topTrailing) {
             if !embedded {
-                TrafficDot(color: Color(red: 0.99, green: 0.74, blue: 0.20),
+                TrafficDot(color: .white, glass: true,
                            symbol: "minus", help: "Minimize to circle", action: onCollapse)
                     .padding(.trailing, 6).padding(.top, 5)
+                    .opacity(chrome ? 1 : 0)
+                    .allowsHitTesting(chrome)
             }
         }
-        .overlay(alignment: .bottomTrailing) { if !embedded { ResizeHandle(window: window) } }
+        .overlay(alignment: .bottomTrailing) {
+            // Resize grip stays visible (faint) so enlarging is never "lost".
+            if !embedded { ResizeHandle(window: window) }
+        }
         .overlay {
             if !embedded {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -348,6 +362,8 @@ private struct ExpandedBar: View {
         }
         .shadow(color: embedded ? .clear : .black.opacity(0.35), radius: 10, y: 4)
         .padding(embedded ? 0 : 2)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .contextMenu {
             Button(window.showTranscript ? "Hide Transcript" : "Show Transcript") { window.toggleTranscript() }
             Button("Minimize") { onCollapse() }
@@ -359,7 +375,7 @@ private struct ExpandedBar: View {
 
     private var content: some View {
         HStack(spacing: mode == .mini ? 8 : 10) {
-            if showGrip { DotDragHandle(window: window) }
+            if !embedded { leftRail }
 
             // Art + text double as a drag surface once the grip is gone.
             HStack(spacing: mode == .mini ? 8 : 10) {
@@ -376,10 +392,26 @@ private struct ExpandedBar: View {
 
             controls
         }
-        .padding(.leading, showGrip ? 6 : 8)
+        .padding(.leading, 6)
         .padding(.trailing, mode == .mini ? 8 : 14)
         .padding(.top, 2)
         .padding(.bottom, showBottomSeek ? 4 : 2)
+    }
+
+    /// Left rail: red close dot on top, the six-dot drag grip below it, both
+    /// left-aligned and top-aligned to the album art (its height matches the
+    /// 42pt artwork). Hidden at rest, revealed on hover with the rest of the
+    /// chrome. Reserves its width always so the artwork never shifts.
+    private var leftRail: some View {
+        VStack(spacing: 3) {
+            TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                       symbol: "xmark", help: "Close player", action: onClose)
+            if showGrip { DotDragHandle(window: window) }
+            Spacer(minLength: 0)
+        }
+        .frame(width: 16, height: 42, alignment: .top)
+        .opacity(chrome ? 1 : 0)
+        .allowsHitTesting(chrome)
     }
 
     private var windowDrag: some Gesture {
@@ -428,7 +460,7 @@ private struct ExpandedBar: View {
                 .help("Previous sentence")
             }
 
-            PlayButton(engine: engine, showRing: ringProgress)
+            if showPlay { PlayButton(engine: engine, showRing: ringProgress) }
 
             if showNext {
                 Button { engine.nextChunk() } label: {
@@ -732,12 +764,12 @@ private struct DotDragHandle: View {
     @State private var hovering = false
 
     var body: some View {
-        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.35)).frame(width: 2.5, height: 2.5)
-        HStack(spacing: 3) {
-            VStack(spacing: 3) { dot; dot; dot }
-            VStack(spacing: 3) { dot; dot; dot }
+        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.4)).frame(width: 2.5, height: 2.5)
+        HStack(spacing: 2.5) {
+            VStack(spacing: 2.5) { dot; dot; dot }
+            VStack(spacing: 2.5) { dot; dot; dot }
         }
-        .frame(width: 18, height: 40)
+        .frame(width: 14, height: 24)
         .contentShape(Rectangle())
         .onHover { inside in
             hovering = inside
@@ -754,9 +786,11 @@ private struct DotDragHandle: View {
     }
 }
 
-/// One traffic-light dot: colored circle that reveals its glyph on hover.
+/// One corner dot that reveals its glyph on hover. Solid (traffic-light) by
+/// default; `glass` renders a frosted translucent dot to match the card.
 private struct TrafficDot: View {
     let color: Color
+    var glass: Bool = false
     let symbol: String
     let help: String
     let action: () -> Void
@@ -765,12 +799,17 @@ private struct TrafficDot: View {
     var body: some View {
         Button(action: action) {
             Circle()
-                .fill(color)
+                .fill(glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(color))
+                .overlay {
+                    if glass {
+                        Circle().strokeBorder(.white.opacity(0.55), lineWidth: 0.75)
+                    }
+                }
                 .frame(width: 11, height: 11)
                 .overlay(
                     Image(systemName: symbol)
                         .font(.system(size: 6, weight: .black))
-                        .foregroundStyle(.black.opacity(0.6))
+                        .foregroundStyle(glass ? .white.opacity(0.9) : .black.opacity(0.6))
                         .opacity(hovering ? 1 : 0)
                 )
         }
