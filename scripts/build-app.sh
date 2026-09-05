@@ -30,6 +30,16 @@ cp "scripts/Info.plist" "${APP_PATH}/Contents/Info.plist"
 # without the user re-running setup and re-downloading 350 MB of weights;
 # KokoroProvider prefers this copy over the one in ~/.speakit/kokoro.
 cp "scripts/kokoro_daemon.py" "${APP_PATH}/Contents/Resources/kokoro_daemon.py"
+
+# Static image assets (provider logos etc.) loaded at runtime via Bundle.main.
+if [ -d "Resources" ]; then
+    for asset in Resources/*.png Resources/*.jpg Resources/*.svg; do
+        [ -e "${asset}" ] || continue
+        echo "› Copying asset: $(basename "${asset}")"
+        cp "${asset}" "${APP_PATH}/Contents/Resources/"
+    done
+fi
+
 printf "APPL????" > "${APP_PATH}/Contents/PkgInfo"
 
 # Copy SwiftPM resource bundles (e.g. KeyboardShortcuts_KeyboardShortcuts.bundle)

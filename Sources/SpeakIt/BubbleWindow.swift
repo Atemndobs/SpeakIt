@@ -601,9 +601,9 @@ private struct ProviderArtwork: View {
                 colors: [Color(white: 0.24), Color(white: 0.11)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
         case "kokoro":
+            // Dark tile so the orange Kokoro logo reads clearly.
             return AnyShapeStyle(LinearGradient(
-                colors: [Color(red: 0.92, green: 0.36, blue: 0.56),
-                         Color(red: 0.55, green: 0.15, blue: 0.42)],
+                colors: [Color(white: 0.20), Color(white: 0.07)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
         default:
             let hue = Double(abs(providerId.hashValue) % 360) / 360.0
@@ -629,10 +629,13 @@ private struct ProviderArtwork: View {
         case "edge-tts":
             MicrosoftSquares()
         case "kokoro":
-            // Kokoro (心 — "heart"): a heart mark for the local neural voice.
-            Image(systemName: "heart.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
+            if let logo = BundledImage.image("kokoro-logo") {
+                Image(nsImage: logo).resizable().scaledToFit().padding(5)
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.96, green: 0.49, blue: 0.12))
+            }
         default:
             Image(systemName: "waveform")
                 .font(.system(size: 15, weight: .semibold))

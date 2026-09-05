@@ -73,3 +73,16 @@ final class VoiceAvatarStore: ObservableObject {
         return String(s.map { allowed.contains($0) ? $0 : "_" })
     }
 }
+
+/// Loads static image assets bundled in the app (Contents/Resources), cached.
+enum BundledImage {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(_ name: String) -> NSImage? {
+        if let cached = cache[name] { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
+              let img = NSImage(contentsOf: url) else { return nil }
+        cache[name] = img
+        return img
+    }
+}
