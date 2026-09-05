@@ -120,7 +120,14 @@ struct MenuBarView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Speed").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Speed").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(speedLabel)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 Slider(
                     value: $engine.rate,
                     in: AVSpeechUtteranceMinimumSpeechRate...AVSpeechUtteranceMaximumSpeechRate
@@ -190,6 +197,14 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    /// Speed shown as a multiplier and a percentage, relative to normal
+    /// (the default rate = 1.0× = 100%).
+    private var speedLabel: String {
+        let mult = Double(engine.rate / AVSpeechUtteranceDefaultSpeechRate)
+        let pct = Int((mult * 100).rounded())
+        return String(format: "%.1f×  ·  %d%%", mult, pct)
     }
 
     /// Pick an image and install it as the avatar for the current voice.
