@@ -13,7 +13,9 @@ final class ServiceProvider: NSObject {
             return
         }
         Task { @MainActor in
-            TTSEngine.shared.speak(text)
+            SpeakRequestHandler.shared.handle(
+                SpeakRequest(text: text, source: .selection, action: .replace, sanitizeMarkdown: true)
+            )
         }
     }
 }

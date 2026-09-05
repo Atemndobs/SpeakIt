@@ -79,7 +79,7 @@
       } catch (_) {
         // Extension context invalidated on update — fall back to direct anchor.
         const a = document.createElement("a");
-        a.href = `speakit://speak?text=${encodeURIComponent(text.slice(0, 4000))}`;
+        a.href = `speakit://speak-response?text=${encodeURIComponent(text.slice(0, 4000))}&requestSource=extensionButton&action=replace&sanitizeMarkdown=1`;
         a.rel = "noopener";
         a.style.display = "none";
         document.body.appendChild(a);
