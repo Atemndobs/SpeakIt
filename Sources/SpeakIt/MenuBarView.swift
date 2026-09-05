@@ -55,7 +55,11 @@ struct MenuBarView: View {
                 set: { engine.switchProvider(to: $0) }
             )) {
                 ForEach(engine.providers, id: \.id) { p in
-                    EngineLabel(providerId: p.id, title: p.displayName).tag(p.id)
+                    // Text only. An NSImage in a menu-style picker row ignores
+                    // its frame and scales to fill the field, which hid the
+                    // engine name behind a giant logo. The value belongs here;
+                    // the logos live on the toggle rows.
+                    Text(p.displayName).tag(p.id)
                 }
             } label: {
                 Label("Engine", systemImage: "cpu")

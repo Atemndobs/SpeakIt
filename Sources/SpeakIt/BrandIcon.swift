@@ -77,39 +77,3 @@ struct BrandLabel: View {
         }
     }
 }
-
-/// The engine picker's rows.
-///
-/// Menu-style pickers render through AppKit, which handles text and images but
-/// not arbitrary SwiftUI shapes, so the drawn marks used on the player card
-/// (the ElevenLabs bars, the Microsoft squares) cannot be reused here. Each
-/// engine therefore resolves to a real image where one exists and an SF Symbol
-/// otherwise.
-struct EngineLabel: View {
-    let providerId: String
-    let title: String
-
-    var body: some View {
-        switch providerId {
-        case "av-speech":
-            // Apple ships its own logo as a symbol, so this one is genuine.
-            Label(title, systemImage: "apple.logo")
-        case "edge-tts":
-            BrandLabel(title: title, bundleIDs: BrandIcon.Brand.edge, symbol: "globe")
-        case "kokoro":
-            if let logo = BundledImage.image("kokoro-logo") {
-                Label {
-                    Text(title)
-                } icon: {
-                    Image(nsImage: logo).resizable().scaledToFit().frame(width: 14, height: 14)
-                }
-            } else {
-                Label(title, systemImage: "desktopcomputer")
-            }
-        case "elevenlabs":
-            Label(title, systemImage: "waveform.circle.fill")
-        default:
-            Label(title, systemImage: "waveform")
-        }
-    }
-}
