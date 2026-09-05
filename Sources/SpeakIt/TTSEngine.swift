@@ -13,7 +13,16 @@ final class TTSEngine: ObservableObject {
         didSet { UserDefaults.standard.set(activeProviderId, forKey: Keys.activeProviderId) }
     }
     @Published var selectedVoiceId: String? {
-        didSet { UserDefaults.standard.set(selectedVoiceId, forKey: voiceKey(for: activeProviderId)) }
+        didSet {
+            // Only persist a voice the active provider actually offers.
+            // `switchProvider` sets the provider before the voice, so there is
+            // a window where this object holds a new provider and the previous
+            // provider's voice; a write landing there used to file the wrong id
+            // under the new provider's key. See VoiceSelection.canPersist.
+            let available = activeProvider?.availableVoices.map(\.id) ?? []
+            guard VoiceSelection.canPersist(selectedVoiceId, available: available) else { return }
+            UserDefaults.standard.set(selectedVoiceId, forKey: voiceKey(for: activeProviderId))
+        }
     }
     @Published var rate: Float {
         didSet { UserDefaults.standard.set(Double(rate), forKey: Keys.rate) }
@@ -68,16 +77,12 @@ final class TTSEngine: ObservableObject {
         }()
         let storedVoice = defaults.string(forKey: Self.voiceKey(for: provider))
 
-        let resolvedVoiceId: String? = {
-            if let storedVoice, active.availableVoices.contains(where: { $0.id == storedVoice }) {
-                return storedVoice
-            }
-            if provider == "edge-tts",
-               edge.availableVoices.contains(where: { $0.id == Self.defaultEdgeVoice }) {
-                return Self.defaultEdgeVoice
-            }
-            return Self.bestDefaultVoiceId(for: active)
-        }()
+        let resolvedVoiceId = VoiceSelection.resolve(
+            stored: storedVoice,
+            available: active.availableVoices.map(\.id),
+            preferred: provider == "edge-tts" ? Self.defaultEdgeVoice : nil,
+            ranked: Self.voicesRankedByQuality(active)
+        )
 
         self.providers = [av, edge, kokoro, eleven]
         self.activeProviderId = provider
@@ -106,6 +111,8 @@ final class TTSEngine: ObservableObject {
         kokoro.onStateChange = stateHandler
         kokoro.onProgress = progressHandler
         kokoro.onHighlight = highlightHandler
+
+        healCorruptedVoiceKeys()
     }
 
     var activeProvider: TTSProvider? { providers.first { $0.id == activeProviderId } }
@@ -141,33 +148,42 @@ final class TTSEngine: ObservableObject {
         activeProvider?.stop()
         activeProviderId = providerId
         guard let p = activeProvider else { return }
-        // Prefer the voice the user last picked for this provider; else best default
-        let stored = UserDefaults.standard.string(forKey: voiceKey(for: providerId))
-        // ElevenLabs voices load from the network, so the cache may still be
-        // empty here. Keep the stored id rather than resetting the user's
-        // choice to nil every launch before the catalogue arrives.
-        if providerId == "elevenlabs", let stored, p.availableVoices.isEmpty {
-            selectedVoiceId = stored
-        } else if let stored, p.availableVoices.contains(where: { $0.id == stored }) {
-            selectedVoiceId = stored
-        } else if providerId == "edge-tts",
-                  p.availableVoices.contains(where: { $0.id == Self.defaultEdgeVoice }) {
-            selectedVoiceId = Self.defaultEdgeVoice
-        } else {
-            selectedVoiceId = bestDefaultVoiceId(for: p)
+        selectedVoiceId = VoiceSelection.resolve(
+            stored: UserDefaults.standard.string(forKey: voiceKey(for: providerId)),
+            available: p.availableVoices.map(\.id),
+            preferred: providerId == "edge-tts" ? Self.defaultEdgeVoice : nil,
+            ranked: Self.voicesRankedByQuality(p)
+        )
+    }
+
+    /// Voice ids in descending quality, the generic fallback order when a
+    /// provider has no stored or preferred voice.
+    private static func voicesRankedByQuality(_ provider: TTSProvider) -> [String] {
+        let order = ["Premium", "Neural", "Enhanced"]
+        return provider.availableVoices
+            .sorted { a, b in
+                (order.firstIndex(of: a.quality) ?? order.count)
+                    < (order.firstIndex(of: b.quality) ?? order.count)
+            }
+            .map(\.id)
+    }
+
+    /// Clear voice keys naming a voice their provider does not offer.
+    ///
+    /// Installs that ran before the persistence guard carry corrupted entries,
+    /// and those survive the fix. Wiping them once means the next switch picks
+    /// a sensible default instead of silently discarding a stored id.
+    private func healCorruptedVoiceKeys() {
+        let defaults = UserDefaults.standard
+        var stored: [String: String?] = [:]
+        var catalogues: [String: [String]] = [:]
+        for provider in providers {
+            stored[provider.id] = defaults.string(forKey: Self.voiceKey(for: provider.id))
+            catalogues[provider.id] = provider.availableVoices.map(\.id)
         }
-    }
-
-    private func bestDefaultVoiceId(for provider: TTSProvider) -> String? {
-        Self.bestDefaultVoiceId(for: provider)
-    }
-
-    private static func bestDefaultVoiceId(for provider: TTSProvider) -> String? {
-        let voices = provider.availableVoices
-        return voices.first(where: { $0.quality == "Premium" })?.id
-            ?? voices.first(where: { $0.quality == "Neural" })?.id
-            ?? voices.first(where: { $0.quality == "Enhanced" })?.id
-            ?? voices.first?.id
+        for providerId in VoiceSelection.corruptedProviders(stored: stored, catalogues: catalogues) {
+            defaults.removeObject(forKey: Self.voiceKey(for: providerId))
+        }
     }
 
     func speak(_ text: String, source: String? = nil, title: String? = nil) {
