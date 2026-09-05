@@ -14,7 +14,7 @@ struct MenuBarView: View {
     @AppStorage(ClipboardWatcher.Keys.enabled) private var speakOnCopy: Bool = false
     @AppStorage(AutoSpeechSettings.Keys.claudeCodeEnabled) private var speakClaudeResponses: Bool = false
     @AppStorage(CodexTranscriptWatcher.Keys.enabled) private var speakCodexResponses: Bool = false
-    @AppStorage(VoiceAvatarStore.Keys.generate) private var generateAvatars: Bool = true
+    @AppStorage(VoiceAvatarStore.Keys.mode) private var avatarMode: String = VoiceAvatarStore.modePhoto
     @AppStorage(VoiceAvatarStore.Keys.style) private var avatarStyle: String = VoiceAvatarStore.defaultStyle
 
     var body: some View {
@@ -68,30 +68,36 @@ struct MenuBarView: View {
                 }
                 .pickerStyle(.menu)
 
-                HStack(spacing: 6) {
-                    Button {
-                        pickAvatarForCurrentVoice()
-                    } label: {
-                        Label("Set voice avatar…", systemImage: "person.crop.circle.badge.plus")
-                    }
-                    .controlSize(.small)
-                    .disabled(engine.selectedVoiceId == nil)
+                Picker("Avatar", selection: $avatarMode) {
+                    Text("Photos").tag(VoiceAvatarStore.modePhoto)
+                    Text("Illustrated").tag(VoiceAvatarStore.modeGenerated)
+                    Text("Logos only").tag(VoiceAvatarStore.modeLogo)
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .onChange(of: avatarMode) { _, _ in VoiceAvatarStore.shared.refresh() }
 
-                    Button {
-                        NSWorkspace.shared.open(VoiceAvatarStore.shared.directory)
-                    } label: {
-                        Image(systemName: "folder")
+                if avatarMode == VoiceAvatarStore.modePhoto {
+                    HStack(spacing: 6) {
+                        Button {
+                            pickAvatarForCurrentVoice()
+                        } label: {
+                            Label("Set voice avatar…", systemImage: "person.crop.circle.badge.plus")
+                        }
+                        .controlSize(.small)
+                        .disabled(engine.selectedVoiceId == nil)
+
+                        Button {
+                            NSWorkspace.shared.open(VoiceAvatarStore.shared.directory)
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .controlSize(.small)
+                        .help("Open the avatars folder")
                     }
-                    .controlSize(.small)
-                    .help("Open the avatars folder")
                 }
 
-                Toggle("Auto-generate avatars (DiceBear)", isOn: $generateAvatars)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .onChange(of: generateAvatars) { _, _ in VoiceAvatarStore.shared.refresh() }
-
-                if generateAvatars {
+                if avatarMode != VoiceAvatarStore.modeLogo {
                     HStack(spacing: 6) {
                         Picker("Style", selection: $avatarStyle) {
                             ForEach(VoiceAvatarStore.styles, id: \.self) { Text($0).tag($0) }
@@ -106,7 +112,7 @@ struct MenuBarView: View {
                             Image(systemName: "arrow.clockwise")
                         }
                         .controlSize(.small)
-                        .help("Re-generate all avatars")
+                        .help("Re-generate illustrated avatars")
                     }
                 }
             }

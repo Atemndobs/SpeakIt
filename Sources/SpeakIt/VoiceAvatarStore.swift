@@ -22,9 +22,17 @@ final class VoiceAvatarStore: ObservableObject {
     static let extensions = ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff"]
 
     enum Keys {
-        static let generate = "SpeakIt.generateAvatars"
+        static let mode = "SpeakIt.avatarMode"
         static let style = "SpeakIt.avatarStyle"
     }
+
+    /// What the artwork shows:
+    ///   photo      – a user-set face, else a generated one, else the logo
+    ///   generated  – a DiceBear avatar (ignores user-set photos), else the logo
+    ///   logo       – always the provider logo
+    static let modePhoto = "photo"
+    static let modeGenerated = "generated"
+    static let modeLogo = "logo"
 
     /// DiceBear styles offered in the menu (all render a per-seed face/character).
     static let styles = ["avataaars", "adventurer", "micah", "personas",
@@ -32,7 +40,7 @@ final class VoiceAvatarStore: ObservableObject {
                          "bottts", "fun-emoji"]
     static let defaultStyle = "avataaars"
 
-    var generateEnabled: Bool { UserDefaults.standard.object(forKey: Keys.generate) as? Bool ?? true }
+    var mode: String { UserDefaults.standard.string(forKey: Keys.mode) ?? Self.modePhoto }
     var style: String { UserDefaults.standard.string(forKey: Keys.style) ?? Self.defaultStyle }
 
     let directory: URL = {
@@ -56,15 +64,21 @@ final class VoiceAvatarStore: ObservableObject {
     /// auto-generated DiceBear face (fetched + cached on first miss), else nil
     /// to fall back to the provider logo.
     func image(providerId: String, voiceId: String?) -> NSImage? {
-        for key in candidateKeys(providerId: providerId, voiceId: voiceId) {
-            if let cached = cache[key] { return cached }
-            if let url = fileURL(for: key), let img = NSImage(contentsOf: url) {
-                cache[key] = img
-                return img
+        let m = mode
+        if m == Self.modeLogo { return nil }
+
+        // Photo mode prefers a user-set image; generated mode ignores them.
+        if m != Self.modeGenerated {
+            for key in candidateKeys(providerId: providerId, voiceId: voiceId) {
+                if let cached = cache[key] { return cached }
+                if let url = fileURL(for: key), let img = NSImage(contentsOf: url) {
+                    cache[key] = img
+                    return img
+                }
             }
         }
 
-        guard generateEnabled, let v = voiceId, !v.isEmpty else { return nil }
+        guard let v = voiceId, !v.isEmpty else { return nil }
         let name = "\(sanitize(style))__\(sanitize(v))"
         if let cached = cache[name] { return cached }
         let dest = generatedDirectory.appendingPathComponent("\(name).png")
