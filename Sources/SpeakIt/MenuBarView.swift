@@ -14,6 +14,8 @@ struct MenuBarView: View {
     @AppStorage(ClipboardWatcher.Keys.enabled) private var speakOnCopy: Bool = false
     @AppStorage(AutoSpeechSettings.Keys.claudeCodeEnabled) private var speakClaudeResponses: Bool = false
     @AppStorage(CodexTranscriptWatcher.Keys.enabled) private var speakCodexResponses: Bool = false
+    @AppStorage(VoiceAvatarStore.Keys.generate) private var generateAvatars: Bool = true
+    @AppStorage(VoiceAvatarStore.Keys.style) private var avatarStyle: String = VoiceAvatarStore.defaultStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -82,6 +84,30 @@ struct MenuBarView: View {
                     }
                     .controlSize(.small)
                     .help("Open the avatars folder")
+                }
+
+                Toggle("Auto-generate avatars (DiceBear)", isOn: $generateAvatars)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .onChange(of: generateAvatars) { _, _ in VoiceAvatarStore.shared.refresh() }
+
+                if generateAvatars {
+                    HStack(spacing: 6) {
+                        Picker("Style", selection: $avatarStyle) {
+                            ForEach(VoiceAvatarStore.styles, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .onChange(of: avatarStyle) { _, _ in VoiceAvatarStore.shared.refresh() }
+
+                        Button {
+                            VoiceAvatarStore.shared.regenerate()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .controlSize(.small)
+                        .help("Re-generate all avatars")
+                    }
                 }
             }
 
