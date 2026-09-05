@@ -25,6 +25,11 @@ mkdir -p "${APP_PATH}/Contents/MacOS"
 mkdir -p "${APP_PATH}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_PATH}/Contents/MacOS/${APP_NAME}"
 cp "scripts/Info.plist" "${APP_PATH}/Contents/Info.plist"
+
+# The Kokoro synthesis daemon. Bundled so an app update ships a new script
+# without the user re-running setup and re-downloading 350 MB of weights;
+# KokoroProvider prefers this copy over the one in ~/.speakit/kokoro.
+cp "scripts/kokoro_daemon.py" "${APP_PATH}/Contents/Resources/kokoro_daemon.py"
 printf "APPL????" > "${APP_PATH}/Contents/PkgInfo"
 
 # Copy SwiftPM resource bundles (e.g. KeyboardShortcuts_KeyboardShortcuts.bundle)

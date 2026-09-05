@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import AppKit
 import NaturalLanguage
+import SpeechKit
 
 @MainActor
 final class TTSEngine: ObservableObject {
@@ -49,6 +50,7 @@ final class TTSEngine: ObservableObject {
         let av = AVSpeechProvider()
         let edge = EdgeTTSProvider()
         let eleven = ElevenLabsProvider()
+        let kokoro = KokoroProvider()
 
         // --- Step 1: initialize ALL stored properties before referencing self ---
         let defaults = UserDefaults.standard
@@ -60,6 +62,7 @@ final class TTSEngine: ObservableObject {
             switch provider {
             case edge.id: return edge
             case eleven.id: return eleven
+            case kokoro.id: return kokoro
             default: return av
             }
         }()
@@ -76,7 +79,7 @@ final class TTSEngine: ObservableObject {
             return Self.bestDefaultVoiceId(for: active)
         }()
 
-        self.providers = [av, edge, eleven]
+        self.providers = [av, edge, kokoro, eleven]
         self.activeProviderId = provider
         self.rate = storedRate ?? AVSpeechUtteranceDefaultSpeechRate
         self.selectedVoiceId = resolvedVoiceId
@@ -100,6 +103,9 @@ final class TTSEngine: ObservableObject {
         eleven.onStateChange = stateHandler
         eleven.onProgress = progressHandler
         eleven.onHighlight = highlightHandler
+        kokoro.onStateChange = stateHandler
+        kokoro.onProgress = progressHandler
+        kokoro.onHighlight = highlightHandler
     }
 
     var activeProvider: TTSProvider? { providers.first { $0.id == activeProviderId } }
@@ -108,6 +114,13 @@ final class TTSEngine: ObservableObject {
     /// affordances that only this provider has.
     var elevenLabs: ElevenLabsProvider? {
         providers.first { $0.id == "elevenlabs" } as? ElevenLabsProvider
+    }
+
+    /// Typed handle for the settings panel, which shows install state for the
+    /// local engine because a missing 325 MB model is not something the generic
+    /// voice picker can explain.
+    var kokoro: KokoroProvider? {
+        providers.first { $0.id == "kokoro" } as? KokoroProvider
     }
 
     /// Re-read the ElevenLabs catalogue and make sure a voice is selected.

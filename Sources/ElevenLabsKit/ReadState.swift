@@ -1,4 +1,5 @@
 import Foundation
+import SpeechKit
 
 /// Bookkeeping for one read: which sentences have audio, which have failed, and
 /// where playback is.
