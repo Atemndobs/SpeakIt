@@ -233,22 +233,18 @@ struct MenuBarView: View {
                 Button {
                     settingsExpanded.toggle()
                 } label: {
-                    // The gear alone. A chevron beside it said the same thing
-                    // twice, and what a click does is discoverable by clicking.
-                    // Filled and a size up: it is the only affordance left on
-                    // this row, so it carries the whole hit target and should
-                    // not read as fine print.
-                    HStack(spacing: 5) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Settings")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
+                    // The gear on its own. A chevron and the word "Settings"
+                    // beside it were two more ways of saying what the gear
+                    // already says. The tooltip carries the name for anyone
+                    // who wants it, and clicking reveals the rest.
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(settingsExpanded ? "Hide settings" : "Show settings")
+                .help(settingsExpanded ? "Hide settings" : "Settings")
 
                 Spacer(minLength: 0)
 
