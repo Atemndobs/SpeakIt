@@ -223,8 +223,8 @@ private struct CircleBadge: View {
         ZStack {
             // The source's provider logo fills the circle (a future per-voice
             // avatar image would slot in here). Progress rings sit on top.
-            ProviderArtwork(providerId: engine.activeProviderId, active: false)
-                .frame(width: 40, height: 40)
+            ProviderArtwork(providerId: engine.activeProviderId,
+                            voiceId: engine.selectedVoiceId, active: false, size: 40)
                 .clipShape(Circle())
 
             Circle()
@@ -380,6 +380,7 @@ private struct ExpandedBar: View {
             // Art + text double as a drag surface once the grip is gone.
             HStack(spacing: mode == .mini ? 8 : 10) {
                 ProviderArtwork(providerId: engine.activeProviderId,
+                                voiceId: engine.selectedVoiceId,
                                 active: engine.isSpeaking && !engine.isPaused)
                     .onTapGesture { window.toggleTranscript() }
                     .help(providerHelp)
@@ -543,17 +544,23 @@ private struct PlayButton: View {
 /// at a glance which engine is speaking (ElevenLabs, Apple, Microsoft Edge).
 private struct ProviderArtwork: View {
     let providerId: String
+    var voiceId: String? = nil
     let active: Bool
+    var size: CGFloat = 42
+
+    @ObservedObject private var avatars = VoiceAvatarStore.shared
+
+    private var corner: CGFloat { size * (8.0 / 42.0) }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: corner, style: .continuous)
             .fill(background)
-            .overlay(mark)
+            .overlay { face }
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
             )
-            .frame(width: 42, height: 42)
+            .frame(width: size, height: size)
             .overlay(alignment: .bottomTrailing) {
                 if active {
                     Image(systemName: "waveform")
@@ -565,6 +572,19 @@ private struct ProviderArtwork: View {
                         .symbolEffect(.variableColor.iterative, isActive: active)
                 }
             }
+    }
+
+    /// A per-voice avatar image if one exists, otherwise the provider logo.
+    @ViewBuilder private var face: some View {
+        if let img = avatars.image(providerId: providerId, voiceId: voiceId) {
+            Image(nsImage: img)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        } else {
+            mark
+        }
     }
 
     private var background: AnyShapeStyle {
