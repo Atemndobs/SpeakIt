@@ -2,6 +2,16 @@ import SwiftUI
 import AppKit
 import NaturalLanguage
 
+/// Shape constants shared by the player card and its album art.
+///
+/// The card was 15 and the art 8, so the card read as noticeably rounder than
+/// the thing sitting inside it. One value now drives both: the art scales it
+/// with its own size, the card uses it directly.
+enum PlayerMetrics {
+    static let corner: CGFloat = 8
+}
+
+
 /// Persistent floating player. Drag-to-move; last position is restored on launch.
 /// Two visual states:
 ///   • minimized → circular badge with progress ring
@@ -339,7 +349,7 @@ private struct ExpandedBar: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : PlayerMetrics.corner, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if !embedded {
                 TrafficDot(color: .white, glass: true,
@@ -355,7 +365,7 @@ private struct ExpandedBar: View {
         }
         .overlay {
             if !embedded {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                RoundedRectangle(cornerRadius: PlayerMetrics.corner, style: .continuous)
                     .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
             }
         }
@@ -558,7 +568,7 @@ private struct ProviderArtwork: View {
 
     @ObservedObject private var avatars = VoiceAvatarStore.shared
 
-    private var corner: CGFloat { size * (8.0 / 42.0) }
+    private var corner: CGFloat { size * (PlayerMetrics.corner / 42.0) }
 
     var body: some View {
         RoundedRectangle(cornerRadius: corner, style: .continuous)
@@ -897,9 +907,9 @@ private struct TranscriptPanel: View {
                 startPoint: .top, endPoint: .bottom
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: PlayerMetrics.corner, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
+            RoundedRectangle(cornerRadius: PlayerMetrics.corner, style: .continuous)
                 .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.35), radius: 10, y: 4)

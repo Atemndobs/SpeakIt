@@ -17,30 +17,23 @@ struct MenuBarView: View {
     @AppStorage(VoiceAvatarStore.Keys.mode) private var avatarMode: String = VoiceAvatarStore.modePhoto
     @AppStorage(VoiceAvatarStore.Keys.style) private var avatarStyle: String = VoiceAvatarStore.defaultStyle
 
+    /// Closed by default, and remembered. Someone configuring the server does
+    /// not want to reopen it on every visit.
+    @AppStorage("SpeakIt.ui.settingsExpanded") private var settingsExpanded: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            // Title and transport share the top row. The transport was a row
+            // and a divider of its own for two buttons that are greyed out
+            // whenever nothing is playing.
+            HStack(spacing: 8) {
                 Text("SpeakIt").font(.headline)
-                Spacer()
+
                 if engine.isSpeaking {
                     Image(systemName: "waveform").foregroundStyle(.tint)
                 }
-            }
 
-            Divider()
-
-            HStack(spacing: 8) {
-                Button { engine.togglePause() } label: {
-                    Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
-                }
-                .disabled(!engine.isSpeaking && !engine.isPaused)
-
-                Button { engine.stop() } label: {
-                    Image(systemName: "stop.fill")
-                }
-                .disabled(!engine.isSpeaking && !engine.isPaused)
-
-                Spacer()
+                Spacer(minLength: 0)
 
                 if (engine.isSpeaking || engine.isPaused) && !bubble.isVisible {
                     Button("Show Player") {
@@ -48,33 +41,59 @@ struct MenuBarView: View {
                     }
                     .controlSize(.small)
                 }
+
+                Button { engine.togglePause() } label: {
+                    Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                }
+                .controlSize(.small)
+                .disabled(!engine.isSpeaking && !engine.isPaused)
+                .help(engine.isPaused ? "Resume" : "Pause")
+
+                Button { engine.stop() } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .controlSize(.small)
+                .disabled(!engine.isSpeaking && !engine.isPaused)
+                .help("Stop")
             }
 
-            Picker("Engine", selection: Binding(
+            Divider()
+
+            Picker(selection: Binding(
                 get: { engine.activeProviderId },
                 set: { engine.switchProvider(to: $0) }
             )) {
                 ForEach(engine.providers, id: \.id) { p in
+                    // Text only. An NSImage in a menu-style picker row ignores
+                    // its frame and scales to fill the field, which hid the
+                    // engine name behind a giant logo. The value belongs here;
+                    // the logos live on the toggle rows.
                     Text(p.displayName).tag(p.id)
                 }
+            } label: {
+                Label("Engine", systemImage: "cpu")
             }
             .pickerStyle(.menu)
 
             if let provider = engine.activeProvider {
-                Picker("Voice", selection: $engine.selectedVoiceId) {
+                Picker(selection: $engine.selectedVoiceId) {
                     ForEach(provider.availableVoices) { v in
                         // Middle dot, not a dash. Several voice names already
                         // carry parentheses ("Ava (Multilingual)"), so a
                         // parenthetical quality would nest awkwardly.
                         Text("\(v.name) · \(v.quality)").tag(Optional(v.id))
                     }
+                } label: {
+                    Label("Voice", systemImage: "person.wave.2")
                 }
                 .pickerStyle(.menu)
 
-                Picker("Avatar", selection: $avatarMode) {
-                    Text("Photos").tag(VoiceAvatarStore.modePhoto)
-                    Text("Illustrated").tag(VoiceAvatarStore.modeGenerated)
-                    Text("Logos only").tag(VoiceAvatarStore.modeLogo)
+                Picker(selection: $avatarMode) {
+                    Label("Photos", systemImage: "photo").tag(VoiceAvatarStore.modePhoto)
+                    Label("Illustrated", systemImage: "paintpalette").tag(VoiceAvatarStore.modeGenerated)
+                    Label("Logos only", systemImage: "square.on.square").tag(VoiceAvatarStore.modeLogo)
+                } label: {
+                    Label("Avatar", systemImage: "person.crop.square")
                 }
                 .pickerStyle(.menu)
                 .controlSize(.small)
@@ -124,13 +143,17 @@ struct MenuBarView: View {
                 ElevenLabsSection(engine: engine, provider: eleven)
             }
 
+            // Only a problem escapes the fold. A broken engine hidden behind a
+            // closed disclosure means the app looks silently mute, with the
+            // reason one click away and no sign it is there. The healthy
+            // "running locally" line lives in Settings.
             if engine.activeProviderId == "kokoro", let kokoro = engine.kokoro {
-                KokoroSection(provider: kokoro)
+                KokoroSection(provider: kokoro, variant: .problemOnly)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Speed").font(.caption).foregroundStyle(.secondary)
+                    Label("Speed", systemImage: "gauge").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Text(speedLabel)
                         .font(.caption)
@@ -143,14 +166,8 @@ struct MenuBarView: View {
                 )
             }
 
-            Divider()
-
-            HStack {
-                Text("Hotkey").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                KeyboardShortcuts.Recorder(for: .speakSelection)
-            }
-
+            // Also a problem, so it stays outside: without this permission the
+            // hotkey and selection reading do not work at all.
             if !AccessibilityPermission.check(prompt: false) {
                 Button("Grant Accessibility Permission…") {
                     AccessibilityPermission.openSettings()
@@ -160,49 +177,127 @@ struct MenuBarView: View {
 
             Divider()
 
-            Toggle("Show play button on selection", isOn: $autoShowOnSelection)
+            // One caption carries the verb for all four rows, so each row only
+            // has to name its source. "Speak Claude Code responses" repeated
+            // the same word three times down the column and cost the width
+            // that made the labels wrap.
+            Label("Speak automatically", systemImage: "waveform")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle(isOn: $speakClaudeResponses) {
+                BrandLabel(title: "Claude Code",
+                           bundleIDs: BrandIcon.Brand.claude, symbol: "terminal")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Speak each Claude Code response as it finishes")
 
-            Toggle("Speak Claude Code responses", isOn: $speakClaudeResponses)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-            Toggle("Speak copied text (Claude, Codex)", isOn: Binding(
-                get: { speakOnCopy },
-                set: { speakOnCopy = $0; ClipboardWatcher.shared.isEnabled = $0 }
-            ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-            Toggle("Speak Codex final responses", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { speakCodexResponses },
                 set: { speakCodexResponses = $0; CodexTranscriptWatcher.shared.isEnabled = $0 }
-            ))
+            )) {
+                BrandLabel(title: "Codex",
+                           bundleIDs: BrandIcon.Brand.openAI,
+                           symbol: "chevron.left.forwardslash.chevron.right")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Speak each Codex final response")
+
+            Toggle(isOn: Binding(
+                get: { speakOnCopy },
+                set: { speakOnCopy = $0; ClipboardWatcher.shared.isEnabled = $0 }
+            )) {
+                // Two products share this row, so the clipboard is the honest
+                // icon here rather than picking one brand over the other.
+                Label("Copied text", systemImage: "doc.on.clipboard")
+            }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Speak text copied while Claude or Codex is frontmost")
+
+            Toggle(isOn: $autoShowOnSelection) {
+                Label("Play button on selection", systemImage: "cursorarrow.rays")
+            }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Show a floating play button whenever text is selected")
 
             Divider()
 
-            LocalServerSection(server: server)
+            // Set-once configuration, folded away. The split is by how often a
+            // control is touched, not by what it belongs to: the things you
+            // reach for mid-read stay above, everything you set when you first
+            // installed the app lives here.
+            // Settings and Quit share the bottom row. The fold is a plain
+            // button rather than a DisclosureGroup so Quit can sit beside it;
+            // DisclosureGroup owns its whole row and would have cost another
+            // line plus a divider for one word.
+            HStack(spacing: 8) {
+                Button {
+                    settingsExpanded.toggle()
+                } label: {
+                    // The gear on its own. A chevron and the word "Settings"
+                    // beside it were two more ways of saying what the gear
+                    // already says. The tooltip carries the name for anyone
+                    // who wants it, and clicking reveals the rest.
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(settingsExpanded ? "Hide settings" : "Settings")
 
-            Divider()
+                Spacer(minLength: 0)
 
-            ReaderAISection(llm: llm)
-
-            Divider()
-
-            Toggle("Start at Login", isOn: Binding(
-                get: { loginItem.isEnabled },
-                set: { loginItem.setEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-
-            Divider()
-
-            Button("Quit SpeakIt") { NSApp.terminate(nil) }
+                Button { NSApp.terminate(nil) } label: {
+                    Label("Quit", systemImage: "xmark.circle")
+                }
+                .controlSize(.small)
                 .keyboardShortcut("q")
+            }
+
+            // Set-once configuration. The split is by how often a control is
+            // touched, not by what it belongs to: the things you reach for
+            // mid-read stay above, everything you set when you first installed
+            // the app lives here.
+            if settingsExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label("Hotkey", systemImage: "keyboard")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        KeyboardShortcuts.Recorder(for: .speakSelection)
+                    }
+
+                    Divider()
+
+                    LocalServerSection(server: server)
+
+                    Divider()
+
+                    ReaderAISection(llm: llm)
+
+                    Divider()
+
+                    Toggle(isOn: Binding(
+                        get: { loginItem.isEnabled },
+                        set: { loginItem.setEnabled($0) }
+                    )) {
+                        Label("Start at Login", systemImage: "power")
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if engine.activeProviderId == "kokoro", let kokoro = engine.kokoro {
+                        KokoroSection(provider: kokoro, variant: .statusOnly)
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(14)
         .frame(width: 320)
@@ -234,40 +329,83 @@ struct MenuBarView: View {
 private struct LocalServerSection: View {
     @ObservedObject var server: LocalFileServer
 
+    /// Remembered, so someone who works with the list every day is not made to
+    /// reopen it each time. Defaults to closed.
+    @AppStorage("SpeakIt.ui.sharesExpanded") private var sharesExpanded: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Local file server").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if server.isRunning {
-                    Circle().fill(.green).frame(width: 6, height: 6)
-                    Text("localhost:\(server.port)").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+            // One control row rather than four stacked ones: power, folders,
+            // add, open. Each is a glyph with a tooltip, because at 320pt the
+            // words were costing a line each and saying little the icon does
+            // not already say.
+            HStack(spacing: 8) {
+                Label("Local file server", systemImage: "server.rack")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            HStack(spacing: 6) {
                 Toggle(isOn: Binding(
                     get: { server.isRunning },
                     set: { _ in server.toggle() }
                 )) {
-                    Text(server.isRunning ? "Running" : "Off")
+                    EmptyView()
                 }
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help(server.isRunning ? "Serving on localhost:\(server.port)" : "Server off")
 
-                Spacer()
+                if !server.shares.isEmpty {
+                    Button {
+                        sharesExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: sharesExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8, weight: .semibold))
+                            Image(systemName: "folder")
+                            Text("\(server.shares.count)").monospacedDigit()
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(sharesExpanded ? "Hide shared folders" : "Show shared folders")
+                }
+
+                Button {
+                    server.pickAndAddShare()
+                    // Open the list on add, otherwise adding a folder while
+                    // collapsed looks like nothing happened.
+                    sharesExpanded = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .controlSize(.small)
+                .help("Add a folder to share")
+
+                Spacer(minLength: 0)
 
                 if server.isRunning {
-                    Button("Open") { server.openInBrowser() }
-                        .controlSize(.small)
+                    Circle().fill(.green).frame(width: 6, height: 6)
+                    Button {
+                        server.openInBrowser()
+                    } label: {
+                        Image(systemName: "safari")
+                    }
+                    .controlSize(.small)
+                    .help("Open http://localhost:\(server.port) in the browser")
                 }
             }
 
-            if !server.shares.isEmpty {
+            // Folded by default. Sixteen shared folders is a realistic number
+            // and the flat list pushed the bind mode, reader AI section and
+            // quit button off the bottom of the menu.
+            if sharesExpanded, !server.shares.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(server.shares) { share in
                         HStack(spacing: 4) {
-                            Text(share.name)
+                            Label(share.name, systemImage: "folder")
                                 .font(.caption)
                                 .lineLimit(1)
                             Spacer()
@@ -278,39 +416,54 @@ private struct LocalServerSection: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help(share.path)
+                            .help("Stop sharing \(share.path)")
                         }
                     }
                 }
-                .padding(.top, 2)
+                .padding(.leading, 2)
             }
 
-            Button {
-                server.pickAndAddShare()
-            } label: {
-                Label("Add Folder…", systemImage: "plus")
-            }
-            .controlSize(.small)
+            // Bind mode and the Tailscale switch share a line. The switch only
+            // applies to the tailnet mode sitting next to it, so splitting them
+            // across two rows spent a line on a relationship the layout can
+            // just show.
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Which interfaces the server listens on")
 
-            Picker("Bind", selection: $server.bindMode) {
-                ForEach(LocalFileServer.BindMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+                Picker(selection: $server.bindMode) {
+                    ForEach(LocalFileServer.BindMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                } label: {
+                    EmptyView()
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .labelsHidden()
+
+                if server.bindMode == .tailnet {
+                    Spacer(minLength: 0)
+                    BrandLabel(title: "", bundleIDs: BrandIcon.Brand.tailscale,
+                               symbol: "lock.shield", size: 13)
+                        .labelStyle(.iconOnly)
+                    Toggle(isOn: $server.tailscaleHTTPS) { EmptyView() }
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                        .help("Serve over the tailnet on the Tailscale HTTPS proxy, port 443")
                 }
             }
-            .pickerStyle(.menu)
-            .controlSize(.small)
             .padding(.top, 2)
 
-            if server.bindMode == .tailnet {
-                Toggle("Use Tailscale HTTPS (proxy :443)", isOn: $server.tailscaleHTTPS)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                if let err = server.lastTailscaleError, !err.isEmpty {
-                    Text(err)
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if server.bindMode == .tailnet,
+               let err = server.lastTailscaleError, !err.isEmpty {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if server.isRunning && server.bindMode != .localhost {
@@ -449,14 +602,17 @@ private struct ReaderAISection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Reader AI search").font(.caption).foregroundStyle(.secondary)
+                Label("Reader AI search", systemImage: "sparkle.magnifyingglass")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if llm.enabled {
                     Circle().fill(.green).frame(width: 6, height: 6)
                 }
             }
 
-            Toggle("Enable Ask AI in reader", isOn: $llm.enabled)
+            Toggle(isOn: $llm.enabled) {
+                Label("Ask AI in reader", systemImage: "wand.and.stars")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
