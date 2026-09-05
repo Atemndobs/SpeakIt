@@ -50,31 +50,37 @@ struct MenuBarView: View {
                 }
             }
 
-            Picker("Engine", selection: Binding(
+            Picker(selection: Binding(
                 get: { engine.activeProviderId },
                 set: { engine.switchProvider(to: $0) }
             )) {
                 ForEach(engine.providers, id: \.id) { p in
-                    Text(p.displayName).tag(p.id)
+                    EngineLabel(providerId: p.id, title: p.displayName).tag(p.id)
                 }
+            } label: {
+                Label("Engine", systemImage: "cpu")
             }
             .pickerStyle(.menu)
 
             if let provider = engine.activeProvider {
-                Picker("Voice", selection: $engine.selectedVoiceId) {
+                Picker(selection: $engine.selectedVoiceId) {
                     ForEach(provider.availableVoices) { v in
                         // Middle dot, not a dash. Several voice names already
                         // carry parentheses ("Ava (Multilingual)"), so a
                         // parenthetical quality would nest awkwardly.
                         Text("\(v.name) · \(v.quality)").tag(Optional(v.id))
                     }
+                } label: {
+                    Label("Voice", systemImage: "person.wave.2")
                 }
                 .pickerStyle(.menu)
 
-                Picker("Avatar", selection: $avatarMode) {
-                    Text("Photos").tag(VoiceAvatarStore.modePhoto)
-                    Text("Illustrated").tag(VoiceAvatarStore.modeGenerated)
-                    Text("Logos only").tag(VoiceAvatarStore.modeLogo)
+                Picker(selection: $avatarMode) {
+                    Label("Photos", systemImage: "photo").tag(VoiceAvatarStore.modePhoto)
+                    Label("Illustrated", systemImage: "paintpalette").tag(VoiceAvatarStore.modeGenerated)
+                    Label("Logos only", systemImage: "square.on.square").tag(VoiceAvatarStore.modeLogo)
+                } label: {
+                    Label("Avatar", systemImage: "person.crop.square")
                 }
                 .pickerStyle(.menu)
                 .controlSize(.small)
@@ -130,7 +136,7 @@ struct MenuBarView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Speed").font(.caption).foregroundStyle(.secondary)
+                    Label("Speed", systemImage: "gauge").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Text(speedLabel)
                         .font(.caption)
@@ -146,7 +152,7 @@ struct MenuBarView: View {
             Divider()
 
             HStack {
-                Text("Hotkey").font(.caption).foregroundStyle(.secondary)
+                Label("Hotkey", systemImage: "keyboard").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 KeyboardShortcuts.Recorder(for: .speakSelection)
             }
@@ -160,25 +166,38 @@ struct MenuBarView: View {
 
             Divider()
 
-            Toggle("Show play button on selection", isOn: $autoShowOnSelection)
+            Toggle(isOn: $autoShowOnSelection) {
+                Label("Show play button on selection", systemImage: "cursorarrow.rays")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
-            Toggle("Speak Claude Code responses", isOn: $speakClaudeResponses)
+            Toggle(isOn: $speakClaudeResponses) {
+                BrandLabel(title: "Speak Claude Code responses",
+                           bundleIDs: BrandIcon.Brand.claude, symbol: "terminal")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
-            Toggle("Speak copied text (Claude, Codex)", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { speakOnCopy },
                 set: { speakOnCopy = $0; ClipboardWatcher.shared.isEnabled = $0 }
-            ))
+            )) {
+                // Two products share this row, so the clipboard is the honest
+                // icon here rather than picking one brand over the other.
+                Label("Speak copied text (Claude, Codex)", systemImage: "doc.on.clipboard")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
-            Toggle("Speak Codex final responses", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { speakCodexResponses },
                 set: { speakCodexResponses = $0; CodexTranscriptWatcher.shared.isEnabled = $0 }
-            ))
+            )) {
+                BrandLabel(title: "Speak Codex final responses",
+                           bundleIDs: BrandIcon.Brand.openAI,
+                           symbol: "chevron.left.forwardslash.chevron.right")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
@@ -192,16 +211,20 @@ struct MenuBarView: View {
 
             Divider()
 
-            Toggle("Start at Login", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { loginItem.isEnabled },
                 set: { loginItem.setEnabled($0) }
-            ))
+            )) {
+                Label("Start at Login", systemImage: "power")
+            }
             .toggleStyle(.switch)
             .controlSize(.small)
 
             Divider()
 
-            Button("Quit SpeakIt") { NSApp.terminate(nil) }
+            Button { NSApp.terminate(nil) } label: {
+                Label("Quit SpeakIt", systemImage: "xmark.circle")
+            }
                 .keyboardShortcut("q")
         }
         .padding(14)
@@ -237,7 +260,8 @@ private struct LocalServerSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Local file server").font(.caption).foregroundStyle(.secondary)
+                Label("Local file server", systemImage: "server.rack")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if server.isRunning {
                     Circle().fill(.green).frame(width: 6, height: 6)
@@ -267,7 +291,7 @@ private struct LocalServerSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(server.shares) { share in
                         HStack(spacing: 4) {
-                            Text(share.name)
+                            Label(share.name, systemImage: "folder")
                                 .font(.caption)
                                 .lineLimit(1)
                             Spacer()
@@ -292,17 +316,22 @@ private struct LocalServerSection: View {
             }
             .controlSize(.small)
 
-            Picker("Bind", selection: $server.bindMode) {
+            Picker(selection: $server.bindMode) {
                 ForEach(LocalFileServer.BindMode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
+            } label: {
+                Label("Bind", systemImage: "network")
             }
             .pickerStyle(.menu)
             .controlSize(.small)
             .padding(.top, 2)
 
             if server.bindMode == .tailnet {
-                Toggle("Use Tailscale HTTPS (proxy :443)", isOn: $server.tailscaleHTTPS)
+                Toggle(isOn: $server.tailscaleHTTPS) {
+                    BrandLabel(title: "Use Tailscale HTTPS (proxy :443)",
+                               bundleIDs: BrandIcon.Brand.tailscale, symbol: "lock.shield")
+                }
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 if let err = server.lastTailscaleError, !err.isEmpty {
@@ -449,14 +478,17 @@ private struct ReaderAISection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Reader AI search").font(.caption).foregroundStyle(.secondary)
+                Label("Reader AI search", systemImage: "sparkle.magnifyingglass")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if llm.enabled {
                     Circle().fill(.green).frame(width: 6, height: 6)
                 }
             }
 
-            Toggle("Enable Ask AI in reader", isOn: $llm.enabled)
+            Toggle(isOn: $llm.enabled) {
+                Label("Enable Ask AI in reader", systemImage: "wand.and.stars")
+            }
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
