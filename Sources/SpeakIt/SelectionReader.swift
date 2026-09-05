@@ -37,7 +37,9 @@ final class SelectionReader {
         guard let text = captured, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        TTSEngine.shared.speak(text)
+        SpeakRequestHandler.shared.handle(
+            SpeakRequest(text: text, source: .selection, action: .replace, sanitizeMarkdown: true)
+        )
     }
 
     private func sendCommandC() {

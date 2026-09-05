@@ -18,7 +18,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
   const text = (info.selectionText || "").trim();
   if (!text || !tab) return;
-  invokeSpeakIt(tab, text);
+  invokeSpeakIt(tab, text, "contextMenu");
 });
 
 // Chrome forbids scripting on its own pages — bail before we get an error.
@@ -37,11 +37,16 @@ function isRestrictedUrl(url) {
   );
 }
 
-function invokeSpeakIt(tab, text) {
+function invokeSpeakIt(tab, text, reason = "contextMenu") {
   if (!tab?.id || isRestrictedUrl(tab.url)) return;
 
   const clipped = text.length > MAX_TEXT_LEN ? text.slice(0, MAX_TEXT_LEN) : text;
-  const url = `speakit://speak?text=${encodeURIComponent(clipped)}`;
+  const source =
+    reason === "selection" ? "selection" :
+    reason === "responseAction" ? "extensionButton" :
+    "contextMenu";
+  const route = reason === "selection" ? "speak-selection" : "speak-response";
+  const url = `speakit://${route}?text=${encodeURIComponent(clipped)}&source=${encodeURIComponent(source)}&action=replace&sanitizeMarkdown=1`;
 
   // Trigger the external protocol via an anchor click in the page, so we
   // don't navigate the current tab. Chrome will hand the URL to macOS,
@@ -71,13 +76,13 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (!tab?.id || !msg?.text) return;
 
   if (msg.type === "speakit:speak") {
-    invokeSpeakIt(tab, msg.text);
+    invokeSpeakIt(tab, msg.text, "responseAction");
     return;
   }
 
   if (msg.type === "speakit:selection") {
     chrome.storage.sync.get({ autoSpeak: false }, ({ autoSpeak }) => {
-      if (autoSpeak) invokeSpeakIt(tab, msg.text);
+      if (autoSpeak) invokeSpeakIt(tab, msg.text, "selection");
     });
   }
 });

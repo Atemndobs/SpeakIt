@@ -63,9 +63,11 @@ final class LocalFileServer: ObservableObject {
     private static let runningKey = "SpeakIt.localServer.running"
     private static let bindModeKey = "SpeakIt.localServer.bindMode"
     private static let tsHTTPSKey = "SpeakIt.localServer.tailscaleHTTPS"
+    private static let apiTokenKey = "SpeakIt.localServer.apiToken"
 
     private var process: Process?
     private let rootURL: URL
+    private let apiToken: String
 
     private init() {
         let support = FileManager.default
@@ -74,6 +76,13 @@ final class LocalFileServer: ObservableObject {
         let raw = UserDefaults.standard.string(forKey: Self.bindModeKey) ?? ""
         bindMode = BindMode(rawValue: raw) ?? .localhost
         tailscaleHTTPS = UserDefaults.standard.bool(forKey: Self.tsHTTPSKey)
+        if let token = UserDefaults.standard.string(forKey: Self.apiTokenKey), !token.isEmpty {
+            apiToken = token
+        } else {
+            let generated = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            UserDefaults.standard.set(generated, forKey: Self.apiTokenKey)
+            apiToken = generated
+        }
         loadShares()
         refreshMagicDNS()
         if UserDefaults.standard.bool(forKey: Self.runningKey) { start() }
@@ -154,6 +163,7 @@ final class LocalFileServer: ObservableObject {
     }
 
     var rootURLString: String { "http://localhost:\(port)/" }
+    var speakEndpointURLString: String { "http://localhost:\(port)/v1/speak" }
 
     func logFileURL() -> URL {
         let logs = FileManager.default
@@ -213,6 +223,7 @@ final class LocalFileServer: ObservableObject {
             from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
             ROOT = sys.argv[1]
+            API_TOKEN = sys.argv[2]
 
             _JOBS = {}
             _JOBS_LOCK = threading.Lock()
@@ -866,7 +877,7 @@ final class LocalFileServer: ObservableObject {
               function speakItDesktop(text) {
                 const t = (text || '').trim();
                 if (!t) return;
-                location.href = 'speakit://speak?text=' + encodeURIComponent(t);
+                location.href = 'speakit://speak-response?text=' + encodeURIComponent(t) + '&requestSource=localAPI&action=replace&sanitizeMarkdown=1';
               }
 
               selectAllBtn.addEventListener('click', () => {
@@ -1122,6 +1133,35 @@ final class LocalFileServer: ObservableObject {
 
                 def do_POST(self):
                     parsed = urllib.parse.urlparse(self.path)
+                    if parsed.path == '/v1/speak':
+                        # Speak text posted by another tool on this machine.
+                        # Bearer-token guarded: the port is reachable over the
+                        # LAN and Tailscale, and speaking is an action, not a
+                        # read, so origin has to be proven rather than assumed.
+                        auth = self.headers.get('Authorization', '')
+                        if auth != 'Bearer ' + API_TOKEN:
+                            return self._json({'error': 'unauthorized'}, status=401)
+                        length = int(self.headers.get('Content-Length', '0') or '0')
+                        if length <= 0:
+                            return self._json({'error': 'missing body'}, status=400)
+                        try:
+                            payload = json.loads(self.rfile.read(length).decode('utf-8', errors='replace'))
+                        except Exception:
+                            return self._json({'error': 'bad json'}, status=400)
+                        text = str(payload.get('text', '')).strip()
+                        if not text:
+                            return self._json({'error': 'missing text'}, status=400)
+                        q = urllib.parse.urlencode({
+                            'text': text,
+                            # `requestSource`, not `source`: the latter is the
+                            # filesystem path in the URL contract.
+                            'requestSource': str(payload.get('source', 'localAPI')),
+                            'action': str(payload.get('action', 'replace')),
+                            'sanitizeMarkdown': '1' if payload.get('sanitizeMarkdown', True) else '0',
+                        })
+                        subprocess.run(['/usr/bin/open', 'speakit://speak-response?' + q], check=False)
+                        return self._json({'ok': True})
+
                     if parsed.path in ('/_ask', '/_tts/start', '/_tts/cancel'):
                         length = int(self.headers.get('Content-Length', '0') or '0')
                         raw = self.rfile.read(length) if length > 0 else b''
@@ -1617,7 +1657,8 @@ final class LocalFileServer: ObservableObject {
                 threading.Thread(target=_warm_search_cache, daemon=True).start()
                 httpd.serve_forever()
             """,
-            rootURL.path
+            rootURL.path,
+            apiToken
         ]
         proc.currentDirectoryURL = rootURL
 

@@ -40,10 +40,14 @@ final class TTSEngine: ObservableObject {
     /// a snippet of the text when nothing better is known). Shown in the bubble so
     /// you can tell at a glance which chat, page, or file is talking.
     @Published var currentTitle: String = ""
+    /// Reads waiting behind the current one. Published so the menu bar can show
+    /// that an enqueued response is pending rather than lost.
+    @Published private(set) var queueDepth: Int = 0
 
     // Natural-break navigation: text is read as one continuous utterance; skip
     // buttons jump to sentence or non-empty line starts.
     private var navigationOffsets: [Int] = []  // character offsets (UTF16) into currentText
+    private var queue = SpeakQueue<SpeakRequest>()
 
     private enum Keys {
         static let activeProviderId = "SpeakIt.activeProviderId"
@@ -187,16 +191,58 @@ final class TTSEngine: ObservableObject {
     }
 
     func speak(_ text: String, source: String? = nil, title: String? = nil) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let provider = activeProvider else { return }
+        handleSpeakRequest(
+            SpeakRequest(
+                text: text,
+                source: .unknown,
+                action: .replace,
+                // Callers of this overload have already normalized, or are
+                // passing text that should be spoken verbatim.
+                sanitizeMarkdown: false,
+                sourcePath: source,
+                title: title
+            )
+        )
+    }
+
+    /// The single entry point for every caller: URL scheme, Services menu,
+    /// clipboard watcher, selection hotkey and the local HTTP API.
+    func handleSpeakRequest(_ request: SpeakRequest) {
+        let trimmed = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        var normalized = request
+        normalized.text = trimmed
+
+        let replaces = request.action != .enqueue
+        // Queued entries are replayed against an idle engine when their turn
+        // comes, and their text is already normalized by then.
+        normalized.action = .replace
+        normalized.sanitizeMarkdown = false
+
+        let decision = queue.submit(
+            normalized,
+            replacesExisting: replaces,
+            isBusy: isSpeaking || isPaused
+        )
+        queueDepth = queue.depth
+        if decision == .start {
+            if replaces { activeProvider?.stop() }
+            startSpeaking(normalized)
+        }
+    }
+
+    private func startSpeaking(_ request: SpeakRequest) {
+        guard let provider = activeProvider else { return }
+        let text = request.text
         let voice = provider.availableVoices.first { $0.id == selectedVoiceId }
-        currentText = trimmed
-        let src = source.flatMap { $0.isEmpty ? nil : $0 }
+        currentText = text
+        let src = request.sourcePath.flatMap { $0.isEmpty ? nil : $0 }
         currentSource = src
-        currentTitle = Self.resolveTitle(title: title, source: src, text: trimmed)
-        navigationOffsets = Self.findNavigationOffsets(in: trimmed)
+        currentTitle = Self.resolveTitle(title: request.title, source: src, text: text)
+        navigationOffsets = Self.findNavigationOffsets(in: text)
         highlightRange = nil
-        provider.speak(trimmed, voice: voice, rate: rate)
+        provider.speak(text, voice: voice, rate: rate)
         BubbleWindow.shared.show()
     }
 
@@ -319,6 +365,12 @@ final class TTSEngine: ObservableObject {
     }
 
     func stop() {
+        // Abandon anything waiting BEFORE the provider reports it stopped.
+        // Without this, refreshState sees an idle provider with a non-empty
+        // queue and immediately starts the next read, so stop only stopped the
+        // current sentence and you had to press it once per queued item.
+        queue.cancelAll()
+        queueDepth = 0
         activeProvider?.stop()
         refreshState()
         // Player stays visible — user dismisses via menu-bar Quit.
@@ -333,6 +385,13 @@ final class TTSEngine: ObservableObject {
         let paused = activeProvider?.isPaused ?? false
         isSpeaking = speaking
         isPaused = paused
+        // A read that ended on its own hands over to the next queued one.
+        // Reached only via provider state changes; `stop()` empties the queue
+        // first so pressing stop cannot start the next read.
+        if !speaking && !paused, let next = queue.advance() {
+            queueDepth = queue.depth
+            startSpeaking(next)
+        }
         // Bubble persists across playback boundaries — no auto-hide.
     }
 

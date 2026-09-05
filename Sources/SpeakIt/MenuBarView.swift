@@ -126,7 +126,7 @@ struct MenuBarView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
 
-            Toggle("Speak copied text (Claude Desktop)", isOn: Binding(
+            Toggle("Speak copied text (Claude, Codex)", isOn: Binding(
                 get: { speakOnCopy },
                 set: { speakOnCopy = $0; ClipboardWatcher.shared.isEnabled = $0 }
             ))

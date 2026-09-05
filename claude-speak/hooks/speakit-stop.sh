@@ -89,5 +89,7 @@ if [ -n "$title_src" ]; then
   title="&title=$(printf '%s' "$(/usr/bin/basename "$title_src")" | /usr/bin/jq -sRr @uri)"
 fi
 
-/usr/bin/open "speakit://speak?text=${encoded}${src}${title}&origin=claude-code" >/dev/null 2>&1 || true
+# speak-response rather than speak: it carries the same source/title/origin,
+# and routes through the request handler so markdown is stripped once.
+/usr/bin/open "speakit://speak-response?text=${encoded}${src}${title}&origin=claude-code&requestSource=plugin&action=replace&sanitizeMarkdown=1" >/dev/null 2>&1 || true
 exit 0

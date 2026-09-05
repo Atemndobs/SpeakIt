@@ -14,7 +14,11 @@ final class ClipboardWatcher {
         static let bundleIDs = "clipboardWatcher.bundleIDs"
     }
 
-    static let defaultBundleIDs = ["com.anthropic.claudefordesktop"]
+    static let defaultBundleIDs = [
+        "com.anthropic.claudefordesktop",
+        "com.openai.chatgpt",
+        "com.openai.codex"
+    ]
 
     private var timer: Timer?
     private var lastChangeCount: Int = NSPasteboard.general.changeCount
@@ -59,9 +63,9 @@ final class ClipboardWatcher {
               watchedBundleIDs.contains(frontID) else { return }
 
         guard let raw = pb.string(forType: .string), !raw.isEmpty else { return }
-        let cleaned = Self.stripMarkdown(raw)
-        guard !cleaned.isEmpty else { return }
-        TTSEngine.shared.speak(cleaned)
+        SpeakRequestHandler.shared.handle(
+            SpeakRequest(text: raw, source: .plugin, action: .replace, sanitizeMarkdown: true)
+        )
     }
 
     /// Strip common markdown syntax so TTS doesn't say "asterisk asterisk".
