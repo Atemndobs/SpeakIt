@@ -1,5 +1,6 @@
 import AVFoundation
 import ElevenLabsKit
+import SpeechKit
 import Foundation
 import NaturalLanguage
 

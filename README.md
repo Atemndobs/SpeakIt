@@ -100,7 +100,7 @@ In the SpeakIt menu bar dropdown, toggle **"Speak copies from Claude"** ON to al
 - Menu-bar app (no Dock icon)
 - Global hotkey (default **⌃⌘S**) → captures current selection → speaks it
 - Floating bubble near cursor with pause/stop
-- **Three engines:** Apple Speech (offline) + Microsoft Edge Neural (online, free) + ElevenLabs (online, paid, highest quality)
+- **Four engines:** Apple Speech (offline) + Microsoft Edge Neural (online, free) + Kokoro-82M (offline, free, neural) + ElevenLabs (online, paid, highest quality)
 - Voice picker per engine, speed slider
 - Provider abstraction (next: OpenAI as a further paid option)
 - Claude Code plugin (`claude-speak`) — auto-read Stop hook + slash commands
@@ -121,6 +121,51 @@ The `fn` key is intercepted by macOS at a level below standard global hotkey API
 For the macOS Services menu entry: right-click selected text → Services → **"Speak with SpeakIt"**. Services indexing is async — if the menu item doesn't appear right away, wait a few seconds, or check System Settings → Keyboard → Keyboard Shortcuts → Services → Text.
 
 ---
+
+## Kokoro (local neural voices)
+
+A neural engine that runs entirely on your machine. No network, no API key, no
+per-character cost. Useful when you are offline, when you would rather not send
+your agent's output to Microsoft or ElevenLabs, or when you just want better
+voices than Apple's without paying for them.
+
+```bash
+./scripts/kokoro-setup.sh
+```
+
+That creates a private virtualenv under `~/.speakit/kokoro`, downloads the
+model and voice pack (about 350 MB), and verifies synthesis works. Nothing is
+installed system-wide, so removing that one directory undoes all of it. Then
+set **Engine** to Kokoro (Local) in the menu bar.
+
+Pass `--int8` instead for a smaller, faster, slightly lower quality model
+(114 MB), which is worth it on an older Mac.
+
+### Speed
+
+Measured on an M3 Max with the default fp32 weights:
+
+| | |
+|---|---|
+| Real-time factor | 0.155, about 5x faster than playback |
+| Model load | 0.57 s, once per app launch |
+| Voices | 54, across 9 languages |
+
+The model is loaded once by a background daemon and stays resident, so only
+the first read of a session pays the load. Sentences are synthesized ahead of
+playback, which is why audio starts before the whole passage is rendered.
+
+**It has no German voices.** Kokoro covers American and British English,
+Spanish, French, Hindi, Italian, Japanese, Portuguese and Mandarin. For German,
+stay on Edge Neural.
+
+### Why not VoxCPM or a larger model
+
+VoxCPM sounds excellent and can clone a voice, but its own benchmarks put it at
+a real-time factor of about 1.76 on Apple silicon, meaning it renders slower
+than it plays. For a reader that should start talking the moment an agent
+finishes, that is disqualifying regardless of quality. Kokoro is roughly eleven
+times faster on the same class of hardware.
 
 ## ElevenLabs
 
@@ -186,6 +231,7 @@ AppDelegate.swift         — lifecycle, hotkey registration, AX prompt
 TTSProvider.swift         — protocol (so we can add Edge TTS, ElevenLabs, etc.)
 AVSpeechProvider.swift    — Apple AVSpeechSynthesizer adapter
 EdgeTTSProvider.swift     — Microsoft Edge Neural via edge-tts CLI
+KokoroProvider.swift      : Kokoro-82M, local ONNX via a resident daemon
 ElevenLabsProvider.swift  : ElevenLabs, sentence-queued streaming synthesis
 TTSEngine.swift           — singleton state, current provider, voice, rate
 SelectionReader.swift     — sends ⌘C, reads pasteboard, restores

@@ -70,6 +70,10 @@ struct MenuBarView: View {
                 ElevenLabsSection(engine: engine, provider: eleven)
             }
 
+            if engine.activeProviderId == "kokoro", let kokoro = engine.kokoro {
+                KokoroSection(provider: kokoro)
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Speed").font(.caption).foregroundStyle(.secondary)
                 Slider(

@@ -12,14 +12,23 @@ let package = Package(
         // provider. Split out from the app so it can be tested: SpeakIt is an
         // @main executable and executables are awkward to import from a test
         // target. This half has no AppKit dependency.
-        .target(name: "ElevenLabsKit"),
+        // Engine-agnostic speech logic: sentence scheduling shared by every
+        // provider, plus the Kokoro voice catalogue, install layout and daemon
+        // protocol. Same reason ElevenLabsKit exists, applied to the parts that
+        // are not specific to one vendor.
+        .target(name: "SpeechKit"),
+        .target(name: "ElevenLabsKit", dependencies: ["SpeechKit"]),
         .executableTarget(
             name: "SpeakIt",
-            dependencies: ["KeyboardShortcuts", "ElevenLabsKit"]
+            dependencies: ["KeyboardShortcuts", "ElevenLabsKit", "SpeechKit"]
         ),
         .testTarget(
             name: "ElevenLabsKitTests",
-            dependencies: ["ElevenLabsKit"]
+            dependencies: ["ElevenLabsKit", "SpeechKit"]
+        ),
+        .testTarget(
+            name: "SpeechKitTests",
+            dependencies: ["SpeechKit"]
         ),
     ]
 )

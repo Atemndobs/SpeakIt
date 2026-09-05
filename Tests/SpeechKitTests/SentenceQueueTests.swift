@@ -1,5 +1,5 @@
 import XCTest
-@testable import ElevenLabsKit
+@testable import SpeechKit
 
 final class SentenceQueueTests: XCTestCase {
 
