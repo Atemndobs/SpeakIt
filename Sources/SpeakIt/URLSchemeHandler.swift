@@ -44,6 +44,11 @@ final class URLSchemeHandler {
             // or page. Falls back to the source basename or a text snippet.
             let title = url.queryItems?.first(where: { $0.name == "title" })?.value
             TTSEngine.shared.speak(trimmed, source: source, title: title)
+        case "expand":
+            BubbleWindow.shared.show()
+            BubbleWindow.shared.setExpanded(true)
+        case "collapse":
+            BubbleWindow.shared.setExpanded(false)
         case "stop":
             TTSEngine.shared.stop()
         case "next":

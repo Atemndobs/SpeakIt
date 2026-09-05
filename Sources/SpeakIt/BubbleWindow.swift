@@ -13,15 +13,22 @@ final class BubbleWindow: ObservableObject {
     @Published private(set) var isVisible: Bool = false
     @Published var expanded: Bool = false
     @Published var showTranscript: Bool = false
+    /// User-draggable width of the expanded mini-player. Drives which controls
+    /// stay visible (see ExpandedBar.mode). Persisted across launches.
+    @Published var barWidth: CGFloat = UserDefaults.standard.object(forKey: BubbleWindow.widthKey) as? Double ?? 384
 
     private var panel: NSPanel?
     private var dragStartOrigin: NSPoint?
+    private var resizeStartWidth: CGFloat?
 
     private let minSize = NSSize(width: 56, height: 56)
-    private let barSize = NSSize(width: 360, height: 78)
-    private let transcriptSize = NSSize(width: 420, height: 300)
+    private let barHeight: CGFloat = 72
+    let minBarWidth: CGFloat = 148
+    let maxBarWidth: CGFloat = 480
+    private let transcriptSize = NSSize(width: 420, height: 320)
     private let screenMargin: CGFloat = 20
     private static let positionKey = "SpeakIt.bubblePosition"
+    private static let widthKey = "SpeakIt.barWidth"
 
     func show() {
         if panel == nil { createPanel() }
@@ -46,17 +53,35 @@ final class BubbleWindow: ObservableObject {
         applySize()
     }
 
-    private func applySize() {
+    private func applySize(animated: Bool = true) {
         guard let panel else { return }
         var frame = panel.frame
         frame.size = currentSize()
-        panel.setFrame(frame, display: true, animate: true)
+        panel.setFrame(frame, display: true, animate: animated)
         savePosition()
     }
 
     private func currentSize() -> NSSize {
         if !expanded { return minSize }
-        return showTranscript ? transcriptSize : barSize
+        if showTranscript { return transcriptSize }
+        return NSSize(width: barWidth, height: barHeight)
+    }
+
+    // MARK: Resize (expanded mini-player width)
+
+    func beginResize() { resizeStartWidth = barWidth }
+
+    func updateResize(translation: CGFloat) {
+        let base = resizeStartWidth ?? barWidth
+        let w = min(maxBarWidth, max(minBarWidth, base + translation))
+        guard abs(w - barWidth) > 0.5 else { return }
+        barWidth = w
+        if expanded && !showTranscript { applySize(animated: false) }
+    }
+
+    func endResize() {
+        resizeStartWidth = nil
+        UserDefaults.standard.set(Double(barWidth), forKey: Self.widthKey)
     }
 
     // MARK: Drag
@@ -240,105 +265,456 @@ private struct CircleBadge: View {
     }
 }
 
+/// Spotify-mini-player-style transport card, resizable by dragging the right
+/// edge. As it narrows it sheds controls gracefully:
+///   full     [•• drag] [logo] now-reading / source   [‹] (▶) [›]  + bottom seek
+///   compact           [logo] now-reading / source        (▶) [›]  + bottom seek
+///   mini              [logo] (now-reading)              (◍▶) [›]   progress = ring
+/// A red close dot sits in the top-left; transcript / minimize live on the
+/// right-click menu. The album art is the active voice provider's logo.
 private struct ExpandedBar: View {
     @ObservedObject var engine: TTSEngine
     @ObservedObject var window: BubbleWindow
     let onCollapse: () -> Void
     let onClose: () -> Void
 
-    @State private var dragValue: Double = 0
-    @State private var scrubbing = false
+    /// When embedded at the foot of the transcript panel, drop the rounded
+    /// clip + shadow so it doesn't draw a card-inside-a-card, and stay full.
+    var embedded: Bool = false
+
+    @State private var dragging = false
+
+    private enum Mode { case full, compact, mini }
+    private var mode: Mode {
+        if embedded { return .full }
+        let w = window.barWidth
+        if w < 210 { return .mini }
+        if w < 300 { return .compact }
+        return .full
+    }
+
+    private var enabled: Bool { engine.isSpeaking || engine.isPaused }
+    private var showGrip: Bool { mode == .full }
+    private var showPrev: Bool { mode == .full }
+    private var showBottomSeek: Bool { mode != .mini }
+    private var ringProgress: Bool { mode == .mini }
+    private var showMeta: Bool { mode != .mini || window.barWidth >= 176 }
+    private var showNext: Bool { mode != .mini || window.barWidth >= 176 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            SourceTitleBar(engine: engine)
-            controlRow
-                .frame(height: 56)
+        ZStack(alignment: .bottomLeading) {
+            content
+            if showBottomSeek {
+                SeekBar(engine: engine)
+                    .padding(.horizontal, embedded ? 0 : 2)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
-        .padding(2)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
+        .overlay(alignment: .topLeading) { if !embedded { CloseDot(action: onClose) } }
+        .overlay(alignment: .trailing) { if !embedded { ResizeHandle(window: window) } }
+        .overlay {
+            if !embedded {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+            }
+        }
+        .shadow(color: embedded ? .clear : .black.opacity(0.35), radius: 10, y: 4)
+        .padding(embedded ? 0 : 2)
+        .contextMenu {
+            Button(window.showTranscript ? "Hide Transcript" : "Show Transcript") { window.toggleTranscript() }
+            Button("Minimize") { onCollapse() }
+            Divider()
+            Button("Close Player") { onClose() }
+            Button("Quit SpeakIt") { NSApp.terminate(nil) }
+        }
     }
 
-    private var controlRow: some View {
-        HStack(spacing: 8) {
-            DragGrip(window: window)
+    private var content: some View {
+        HStack(spacing: mode == .mini ? 8 : 10) {
+            if showGrip { DotDragHandle(window: window) }
 
-            prevChunkButton
-            playPauseButton
-            nextChunkButton
-            stopButton
+            // Art + text double as a drag surface once the grip is gone.
+            HStack(spacing: mode == .mini ? 8 : 10) {
+                ProviderArtwork(providerId: engine.activeProviderId,
+                                active: engine.isSpeaking && !engine.isPaused)
+                    .onTapGesture { window.toggleTranscript() }
+                    .help(providerHelp)
 
-            Slider(
-                value: Binding(
-                    get: { scrubbing ? dragValue : engine.progress },
-                    set: { dragValue = $0 }
-                ),
-                in: 0...1,
-                onEditingChanged: { editing in
-                    if editing {
-                        scrubbing = true
-                        dragValue = engine.progress
-                    } else {
-                        scrubbing = false
-                        engine.seek(to: dragValue)
-                    }
+                if showMeta { titleBlock }
+            }
+            .simultaneousGesture(windowDrag)
+
+            Spacer(minLength: 4)
+
+            controls
+        }
+        .padding(.leading, showGrip ? 10 : 12)
+        .padding(.trailing, mode == .mini ? 10 : 14)
+        .padding(.top, 2)
+        .padding(.bottom, showBottomSeek ? 4 : 2)
+    }
+
+    private var windowDrag: some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .onChanged { v in
+                if !dragging { window.beginDrag(); dragging = true }
+                window.updateDrag(translation: v.translation)
+            }
+            .onEnded { _ in dragging = false; window.endDrag() }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(nowReading)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            if mode != .mini { SubtitleLink(engine: engine) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var controls: some View {
+        HStack(spacing: mode == .mini ? 8 : 10) {
+            if showPrev {
+                Button { engine.previousChunk() } label: {
+                    Image(systemName: "backward.end.fill")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(enabled ? .white.opacity(0.85) : .white.opacity(0.3))
+                        .frame(width: 20, height: 20)
                 }
-            )
-            .tint(.accentColor)
-            .controlSize(.small)
+                .buttonStyle(.plain)
+                .disabled(!enabled)
+                .help("Previous sentence")
+            }
 
-            HoverChip(symbol: "text.alignleft", action: { window.toggleTranscript() })
-            HoverChip(symbol: "minus", action: onCollapse)
-            HoverChip(symbol: "xmark", action: onClose)
+            PlayButton(engine: engine, showRing: ringProgress)
+
+            if showNext {
+                Button { engine.nextChunk() } label: {
+                    Image(systemName: "forward.end.fill")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(enabled ? .white.opacity(0.85) : .white.opacity(0.3))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(!enabled)
+                .help("Next sentence")
+            }
         }
-        .padding(.horizontal, 8)
     }
 
-    private var playPauseButton: some View {
+    private var cardBackground: some View {
+        LinearGradient(
+            colors: [Color(red: 0.16, green: 0.16, blue: 0.17),
+                     Color(red: 0.09, green: 0.09, blue: 0.10)],
+            startPoint: .top, endPoint: .bottom
+        )
+    }
+
+    private var providerHelp: String {
+        let name = engine.activeProvider?.displayName ?? "Voice"
+        return "\(name) — click for transcript"
+    }
+
+    /// Primary line: the sentence currently being spoken (falls back to the
+    /// start of the loaded text, then the title, then a resting label).
+    private var nowReading: String {
+        let ns = engine.currentText as NSString
+        if let h = engine.highlightRange, h.length > 0,
+           h.location != NSNotFound, h.location + h.length <= ns.length {
+            let s = ns.substring(with: h).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !s.isEmpty { return s }
+        }
+        let full = engine.currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !full.isEmpty { return String(full.prefix(140)) }
+        if !engine.currentTitle.isEmpty { return engine.currentTitle }
+        return "SpeakIt"
+    }
+}
+
+/// White circular play/pause. In `showRing` (mini) mode it wears a progress
+/// ring so the bottom seek line can be dropped when the card is narrow.
+private struct PlayButton: View {
+    @ObservedObject var engine: TTSEngine
+    var showRing: Bool
+
+    private var isPlay: Bool { engine.isPaused || !engine.isSpeaking }
+
+    var body: some View {
         Button { engine.togglePause() } label: {
-            Image(systemName: engine.isPaused || !engine.isSpeaking ? "play.fill" : "pause.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 22, height: 22)
+            ZStack {
+                if showRing {
+                    Circle().stroke(.white.opacity(0.18), lineWidth: 2.5)
+                    Circle()
+                        .trim(from: 0, to: max(0, min(1, engine.progress)))
+                        .stroke(.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.linear(duration: 0.12), value: engine.progress)
+                }
+                Circle().fill(.white)
+                    .frame(width: 32, height: 32)
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                Image(systemName: isPlay ? "play.fill" : "pause.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(.black)
+                    .offset(x: isPlay ? 0.5 : 0)
+            }
+            .frame(width: showRing ? 40 : 32, height: showRing ? 40 : 32)
         }
         .buttonStyle(.plain)
+        .help(isPlay ? "Play" : "Pause")
+    }
+}
+
+/// Album-art tile branded with the active voice provider's logo, so it's clear
+/// at a glance which engine is speaking (ElevenLabs, Apple, Microsoft Edge).
+private struct ProviderArtwork: View {
+    let providerId: String
+    let active: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(background)
+            .overlay(mark)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+            )
+            .frame(width: 42, height: 42)
+            .overlay(alignment: .bottomTrailing) {
+                if active {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(2)
+                        .background(Circle().fill(.black.opacity(0.55)))
+                        .padding(2)
+                        .symbolEffect(.variableColor.iterative, isActive: active)
+                }
+            }
     }
 
-    private var stopButton: some View {
-        Button { engine.stop() } label: {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 22, height: 22)
+    private var background: AnyShapeStyle {
+        switch providerId {
+        case "elevenlabs":
+            return AnyShapeStyle(Color.black)
+        case "av-speech":
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.30), Color(white: 0.10)],
+                startPoint: .top, endPoint: .bottom))
+        case "edge-tts":
+            return AnyShapeStyle(Color(white: 0.96))
+        case "kokoro":
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.92, green: 0.36, blue: 0.56),
+                         Color(red: 0.55, green: 0.15, blue: 0.42)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
+        default:
+            let hue = Double(abs(providerId.hashValue) % 360) / 360.0
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(hue: hue, saturation: 0.55, brightness: 0.80),
+                         Color(hue: hue, saturation: 0.65, brightness: 0.55)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
         }
-        .buttonStyle(.plain)
     }
 
-    private var prevChunkButton: some View {
-        Button { engine.previousChunk() } label: {
-            Image(systemName: "backward.end.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 22, height: 22)
+    @ViewBuilder private var mark: some View {
+        switch providerId {
+        case "elevenlabs":
+            // The ElevenLabs "11" mark: two rounded bars.
+            HStack(spacing: 3) {
+                Capsule().fill(.white).frame(width: 3.5, height: 16)
+                Capsule().fill(.white).frame(width: 3.5, height: 16)
+            }
+        case "av-speech":
+            Image(systemName: "apple.logo")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.white)
+        case "edge-tts":
+            MicrosoftSquares()
+        case "kokoro":
+            // Kokoro (心 — "heart"): a heart mark for the local neural voice.
+            Image(systemName: "heart.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+        default:
+            Image(systemName: "waveform")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.95))
         }
-        .buttonStyle(.plain)
-        .disabled(!engine.isSpeaking && !engine.isPaused)
-        .help("Previous sentence / paragraph")
     }
+}
 
-    private var nextChunkButton: some View {
-        Button { engine.nextChunk() } label: {
-            Image(systemName: "forward.end.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 22, height: 22)
+/// The four-square Microsoft mark, drawn (no bundled asset needed).
+private struct MicrosoftSquares: View {
+    private let s: CGFloat = 9
+    private let g: CGFloat = 2
+    var body: some View {
+        VStack(spacing: g) {
+            HStack(spacing: g) {
+                Rectangle().fill(Color(red: 0.95, green: 0.33, blue: 0.15)).frame(width: s, height: s)
+                Rectangle().fill(Color(red: 0.51, green: 0.74, blue: 0.02)).frame(width: s, height: s)
+            }
+            HStack(spacing: g) {
+                Rectangle().fill(Color(red: 0.02, green: 0.65, blue: 0.94)).frame(width: s, height: s)
+                Rectangle().fill(Color(red: 1.00, green: 0.73, blue: 0.03)).frame(width: s, height: s)
+            }
+        }
+    }
+}
+
+/// Right-edge grip: drag to resize the mini-player width.
+private struct ResizeHandle: View {
+    @ObservedObject var window: BubbleWindow
+    @State private var dragging = false
+    @State private var hovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(.clear)
+            .frame(width: 12)
+            .overlay(
+                Capsule()
+                    .fill(.white.opacity(hovering || dragging ? 0.45 : 0.16))
+                    .frame(width: 2, height: 16)
+                    .padding(.trailing, 3),
+                alignment: .trailing
+            )
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { v in
+                        if !dragging { window.beginResize(); dragging = true }
+                        window.updateResize(translation: v.translation.width)
+                    }
+                    .onEnded { _ in dragging = false; window.endResize() }
+            )
+    }
+}
+
+/// Secondary line: the source / project label. Clickable to open in the reader
+/// when a source path is known (keeps the old SourceTitleBar behavior).
+private struct SubtitleLink: View {
+    @ObservedObject var engine: TTSEngine
+    @State private var hovering = false
+
+    private var hasSource: Bool { engine.currentSource != nil }
+    private var label: String { engine.currentTitle.isEmpty ? "SpeakIt" : engine.currentTitle }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(hasSource && hovering ? Color.white.opacity(0.9) : Color.white.opacity(0.55))
+                .underline(hasSource && hovering)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if hasSource {
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(hovering ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { if hasSource { engine.openSource() } }
+        .help(hasSource ? "Open in reader: \(engine.currentSource ?? "")" : label)
+    }
+}
+
+/// Thin progress line along the bottom edge; drag anywhere on it to seek.
+private struct SeekBar: View {
+    @ObservedObject var engine: TTSEngine
+    @State private var hovering = false
+    @State private var dragFraction: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let shown = dragFraction ?? max(0, min(1, engine.progress))
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.14))
+                Capsule().fill(.white.opacity(hovering || dragFraction != nil ? 0.95 : 0.55))
+                    .frame(width: max(0, w * shown))
+            }
+            .frame(height: hovering || dragFraction != nil ? 4 : 2.5)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .contentShape(Rectangle().inset(by: -6))
+            .onHover { hovering = $0 }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in dragFraction = max(0, min(1, v.location.x / w)) }
+                    .onEnded { v in
+                        let f = max(0, min(1, v.location.x / w))
+                        engine.seek(to: f)
+                        dragFraction = nil
+                    }
+            )
+            .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+        .frame(height: 8)
+    }
+}
+
+/// Six-dot drag handle (2×3), the Spotify-style grip. Moves the whole window.
+private struct DotDragHandle: View {
+    @ObservedObject var window: BubbleWindow
+    @State private var dragging = false
+    @State private var hovering = false
+
+    var body: some View {
+        let dot = Circle().fill(.white.opacity(hovering ? 0.7 : 0.35)).frame(width: 2.5, height: 2.5)
+        HStack(spacing: 3) {
+            VStack(spacing: 3) { dot; dot; dot }
+            VStack(spacing: 3) { dot; dot; dot }
+        }
+        .frame(width: 18, height: 40)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    if !dragging { window.beginDrag(); dragging = true }
+                    window.updateDrag(translation: value.translation)
+                }
+                .onEnded { _ in dragging = false; window.endDrag() }
+        )
+    }
+}
+
+/// Red close dot in the top-left corner (reveals an ✕ on hover).
+private struct CloseDot: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color(red: 0.98, green: 0.35, blue: 0.33))
+                .frame(width: 11, height: 11)
+                .overlay(
+                    Image(systemName: "xmark")
+                        .font(.system(size: 6, weight: .black))
+                        .foregroundStyle(.black.opacity(0.55))
+                        .opacity(hovering ? 1 : 0)
+                )
         }
         .buttonStyle(.plain)
-        .disabled(!engine.isSpeaking && !engine.isPaused)
-        .help("Skip to next sentence / paragraph")
+        .onHover { hovering = $0 }
+        .padding(7)
+        .help("Close player")
     }
 }
 
@@ -352,28 +728,47 @@ private struct TranscriptPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                CloseDot(action: onClose)
+                Text(engine.currentTitle.isEmpty ? "SpeakIt" : engine.currentTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+                Spacer()
+                HoverChip(symbol: "minus", action: onCollapse)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+
             TranscriptView(
                 text: engine.currentText,
                 highlight: engine.highlightRange,
                 onTapSentence: { range in engine.seekToCharacter(range.location) }
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
+
             ExpandedBar(
                 engine: engine,
                 window: window,
                 onCollapse: onCollapse,
-                onClose: onClose
+                onClose: onClose,
+                embedded: true
             )
-            .frame(height: 78)
+            .frame(height: 56)
         }
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.14, green: 0.14, blue: 0.15),
+                         Color(red: 0.08, green: 0.08, blue: 0.09)],
+                startPoint: .top, endPoint: .bottom
+            )
         )
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
         .padding(2)
     }
 }
@@ -416,13 +811,13 @@ private struct TranscriptView: View {
                     ForEach(sentences, id: \.idx) { s in
                         Text(s.text)
                             .font(.system(size: 13))
-                            .foregroundStyle(isActive(s.range) ? Color.primary : Color.secondary)
+                            .foregroundStyle(isActive(s.range) ? Color.white : Color.white.opacity(0.45))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 5)
-                                    .fill(isActive(s.range) ? Color.accentColor.opacity(0.22) : .clear)
+                                    .fill(isActive(s.range) ? Color.white.opacity(0.14) : .clear)
                             )
                             .contentShape(Rectangle())
                             .onTapGesture { onTapSentence(s.range) }
@@ -440,60 +835,6 @@ private struct TranscriptView: View {
                 }
             }
         }
-    }
-}
-
-/// Header row above the transport controls: shows what's being read (project /
-/// page / file name) and, when a source path is known, doubles as a clickable
-/// link that opens it in the SpeakIt web reader so you can jump to what's talking.
-private struct SourceTitleBar: View {
-    @ObservedObject var engine: TTSEngine
-    @State private var hovering = false
-
-    private var hasSource: Bool { engine.currentSource != nil }
-    private var label: String { engine.currentTitle.isEmpty ? "Nothing loaded" : engine.currentTitle }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: engine.isSpeaking && !engine.isPaused ? "waveform" : "speaker.wave.2.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(titleColor)
-                .underline(hasSource && hovering)
-
-            if hasSource {
-                Image(systemName: "arrow.up.forward.square")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(hovering ? Color.accentColor : Color.secondary)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 7)
-        .padding(.bottom, 1)
-        .frame(height: 22)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { if hasSource { engine.openSource() } }
-        .help(tooltip)
-    }
-
-    private var titleColor: Color {
-        guard hasSource else { return .secondary }
-        return hovering ? .accentColor : .primary
-    }
-
-    private var tooltip: String {
-        if let src = engine.currentSource {
-            return "Open in reader: \(src)"
-        }
-        return label
     }
 }
 
@@ -516,38 +857,5 @@ private struct HoverChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-    }
-}
-
-private struct DragGrip: View {
-    @ObservedObject var window: BubbleWindow
-    @State private var dragging = false
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 2) {
-            Capsule().fill(.secondary.opacity(hovering ? 0.8 : 0.4)).frame(width: 2, height: 14)
-            Capsule().fill(.secondary.opacity(hovering ? 0.8 : 0.4)).frame(width: 2, height: 14)
-        }
-        .frame(width: 16, height: 28)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            hovering = inside
-            if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    if !dragging {
-                        window.beginDrag()
-                        dragging = true
-                    }
-                    window.updateDrag(translation: value.translation)
-                }
-                .onEnded { _ in
-                    dragging = false
-                    window.endDrag()
-                }
-        )
     }
 }
