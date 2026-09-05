@@ -261,6 +261,10 @@ struct MenuBarView: View {
 private struct LocalServerSection: View {
     @ObservedObject var server: LocalFileServer
 
+    /// Remembered, so someone who works with the list every day is not made to
+    /// reopen it each time. Defaults to closed.
+    @AppStorage("SpeakIt.ui.sharesExpanded") private var sharesExpanded: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -291,30 +295,48 @@ private struct LocalServerSection: View {
                 }
             }
 
+            // Folded by default. Sixteen shared folders is a realistic
+            // number and the flat list pushed everything below it off the
+            // bottom of the menu, so the list is opt-in rather than the
+            // default view.
             if !server.shares.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(server.shares) { share in
-                        HStack(spacing: 4) {
-                            Label(share.name, systemImage: "folder")
-                                .font(.caption)
-                                .lineLimit(1)
-                            Spacer()
-                            Button {
-                                server.removeShare(share.id)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.secondary)
+                DisclosureGroup(isExpanded: $sharesExpanded) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(server.shares) { share in
+                            HStack(spacing: 4) {
+                                Label(share.name, systemImage: "folder")
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                Spacer()
+                                Button {
+                                    server.removeShare(share.id)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help(share.path)
                             }
-                            .buttonStyle(.plain)
-                            .help(share.path)
                         }
                     }
+                    .padding(.top, 2)
+                } label: {
+                    // The count belongs on the closed row: collapsed, it is
+                    // the only thing telling you anything is shared at all.
+                    Label(
+                        server.shares.count == 1 ? "1 folder" : "\(server.shares.count) folders",
+                        systemImage: "folder"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                .padding(.top, 2)
             }
 
             Button {
                 server.pickAndAddShare()
+                // Open the list on add, otherwise adding a folder while
+                // collapsed looks like nothing happened.
+                sharesExpanded = true
             } label: {
                 Label("Add Folder…", systemImage: "plus")
             }
