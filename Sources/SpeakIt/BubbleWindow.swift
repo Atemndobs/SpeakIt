@@ -326,7 +326,18 @@ private struct ExpandedBar: View {
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 15, style: .continuous))
         .overlay(alignment: .topLeading) {
-            if !embedded { WindowControls(onClose: onClose, onMinimize: onCollapse) }
+            if !embedded {
+                TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
+                           symbol: "xmark", help: "Close player", action: onClose)
+                    .padding(.leading, 6).padding(.top, 5)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if !embedded {
+                TrafficDot(color: Color(red: 0.99, green: 0.74, blue: 0.20),
+                           symbol: "minus", help: "Minimize to circle", action: onCollapse)
+                    .padding(.trailing, 6).padding(.top, 5)
+            }
         }
         .overlay(alignment: .bottomTrailing) { if !embedded { ResizeHandle(window: window) } }
         .overlay {
@@ -533,7 +544,10 @@ private struct ProviderArtwork: View {
                 colors: [Color(white: 0.30), Color(white: 0.10)],
                 startPoint: .top, endPoint: .bottom))
         case "edge-tts":
-            return AnyShapeStyle(Color(white: 0.96))
+            // Dark glass tile so the Microsoft mark fits the player's design.
+            return AnyShapeStyle(LinearGradient(
+                colors: [Color(white: 0.24), Color(white: 0.11)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
         case "kokoro":
             return AnyShapeStyle(LinearGradient(
                 colors: [Color(red: 0.92, green: 0.36, blue: 0.56),
@@ -575,21 +589,41 @@ private struct ProviderArtwork: View {
     }
 }
 
-/// The four-square Microsoft mark, drawn (no bundled asset needed).
+/// The four-square Microsoft mark, drawn (no bundled asset needed) in a glassy
+/// style: each tile is a soft top-to-bottom gradient with a diagonal sheen
+/// across the block, so it reads as frosted glass on the dark card.
 private struct MicrosoftSquares: View {
     private let s: CGFloat = 9
-    private let g: CGFloat = 2
+    private let g: CGFloat = 2.5
+
+    private func tile(_ c: Color) -> some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .fill(LinearGradient(colors: [c.opacity(0.98), c.opacity(0.78)],
+                                 startPoint: .top, endPoint: .bottom))
+            .frame(width: s, height: s)
+            .overlay(
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+            )
+    }
+
     var body: some View {
         VStack(spacing: g) {
             HStack(spacing: g) {
-                Rectangle().fill(Color(red: 0.95, green: 0.33, blue: 0.15)).frame(width: s, height: s)
-                Rectangle().fill(Color(red: 0.51, green: 0.74, blue: 0.02)).frame(width: s, height: s)
+                tile(Color(red: 0.95, green: 0.33, blue: 0.15))
+                tile(Color(red: 0.51, green: 0.74, blue: 0.02))
             }
             HStack(spacing: g) {
-                Rectangle().fill(Color(red: 0.02, green: 0.65, blue: 0.94)).frame(width: s, height: s)
-                Rectangle().fill(Color(red: 1.00, green: 0.73, blue: 0.03)).frame(width: s, height: s)
+                tile(Color(red: 0.02, green: 0.65, blue: 0.94))
+                tile(Color(red: 1.00, green: 0.73, blue: 0.03))
             }
         }
+        .overlay(
+            LinearGradient(colors: [.white.opacity(0.45), .clear],
+                           startPoint: .topLeading, endPoint: .center)
+                .blendMode(.plusLighter)
+                .allowsHitTesting(false)
+        )
     }
 }
 
@@ -717,24 +751,6 @@ private struct DotDragHandle: View {
                 }
                 .onEnded { _ in dragging = false; window.endDrag() }
         )
-    }
-}
-
-/// macOS-traffic-light control cluster in the top-left corner: red closes the
-/// player, amber collapses it back to the circular micro view.
-private struct WindowControls: View {
-    let onClose: () -> Void
-    let onMinimize: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            TrafficDot(color: Color(red: 0.98, green: 0.35, blue: 0.33),
-                       symbol: "xmark", help: "Close player", action: onClose)
-            TrafficDot(color: Color(red: 0.99, green: 0.74, blue: 0.20),
-                       symbol: "minus", help: "Minimize to circle", action: onMinimize)
-        }
-        .padding(.leading, 6)
-        .padding(.top, 5)
     }
 }
 
