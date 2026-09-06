@@ -1083,7 +1083,7 @@ git commit -m "feat: watcher decision logic with no network dependency"
 - Consumes: `Repo`, `QueueItem` from `./types`.
 - Produces: `class GitHubClient { constructor(token: string, fetchImpl?: typeof fetch); listRecentlyPushed(limit?: number): Promise<Repo[]>; queueTreePaths(fullName: string): Promise<string[]>; readItem(fullName: string, id: string): Promise<unknown> }`. `queueTreePaths` returns `[]` when the branch does not exist. All methods throw `RateLimitError` on a 403 with a zero remaining header.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `src/voice-queue/github.test.ts`:
 
@@ -1155,12 +1155,12 @@ describe('queueTreePaths', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/github.test.ts`
 Expected: FAIL, cannot resolve `./github`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/voice-queue/github.ts`:
 
@@ -1235,12 +1235,12 @@ export class GitHubClient {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run`
 Expected: PASS, 16 passed across both test files.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/voice-queue/github.ts src/voice-queue/github.test.ts
