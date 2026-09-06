@@ -700,7 +700,7 @@ git commit -m "feat: publish queue items with git plumbing, never touching the w
 - Consumes: `extract_response.sh`, `strip_markdown.py`, `queue_item.py`, `publish_item.sh`.
 - Produces: a `Stop` hook reading the payload on stdin. No stdout contract.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/hooks/test_voice_queue_stop.sh`:
 
@@ -761,12 +761,12 @@ exit "$fails"
 
 Then `chmod +x tests/hooks/test_voice_queue_stop.sh`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `./tests/hooks/test_voice_queue_stop.sh`
 Expected: FAIL, hook not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `hooks/voice-queue-stop.sh`:
 
@@ -828,12 +828,12 @@ exit 0
 
 Then `chmod +x hooks/voice-queue-stop.sh`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `./tests/hooks/test_voice_queue_stop.sh`
 Expected: `all passed`, exit 0. Nine checks.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hooks/voice-queue-stop.sh tests/hooks/test_voice_queue_stop.sh
