@@ -1563,7 +1563,7 @@ cd ~/sites/earshot && GITHUB_TOKEN=<pat> npm run voice-queue:watch
 
 Expected: `watching, every 10000ms.`
 
-- [ ] **Step 5: The real test**
+- [x] **Step 5: The real test**
 
 From your phone, start a cloud session on `hook-probe` and ask it anything. Time from its reply appearing on the phone to the text appearing in the watcher.
 
