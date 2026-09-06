@@ -1,2 +1,2 @@
-{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"## Done\n\nI ran **the tests** and used `pytest`.\n\n- first\n- second\n"}]}}
+{"type":"user","message":{"content":"hi"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Hello there."}]}}
