@@ -1484,7 +1484,7 @@ The first task that requires the network, a cloud session, and a real device. Ev
 - Consumes: everything above.
 - Produces: nothing further depends on this task.
 
-- [ ] **Step 1: Write the installer**
+- [x] **Step 1: Write the installer**
 
 Create `hooks/install-voice-queue.sh`:
 
@@ -1539,14 +1539,14 @@ MSG
 
 Then `chmod +x hooks/install-voice-queue.sh`.
 
-- [ ] **Step 2: Install into the probe repo and commit it there**
+- [x] **Step 2: Install into the probe repo and commit it there**
 
 ```bash
 ./hooks/install-voice-queue.sh ~/sites/hook-probe
 cd ~/sites/hook-probe && git add .claude && git commit -m "feat: publish responses to the voice queue" && git push
 ```
 
-- [ ] **Step 3: Verify locally before trusting the cloud**
+- [x] **Step 3: Verify locally before trusting the cloud**
 
 ```bash
 cd ~/sites/hook-probe && claude -p "Say hello in one sentence."
@@ -1555,7 +1555,7 @@ git fetch origin 'refs/heads/voice/queue:refs/heads/voice/queue' && git show voi
 
 Expected: one `items/<id>.json` on the branch. Also confirm `git status` in that repo is unchanged, which is the assertion that matters most.
 
-- [ ] **Step 4: Start the watcher**
+- [x] **Step 4: Start the watcher**
 
 ```bash
 cd ~/sites/earshot && GITHUB_TOKEN=<pat> npm run voice-queue:watch
@@ -1571,11 +1571,11 @@ Expected: under ten seconds.
 
 If nothing arrives, check in this order, because it isolates the failure fastest: does the branch exist on GitHub (hook problem), does `queueTreePaths` see it (token scope problem), does `pollOnce` return it (dedupe or schema problem).
 
-- [ ] **Step 6: Write it down**
+- [x] **Step 6: Write it down**
 
 Create `docs/voice-queue.md` recording the measured end-to-end latency, the token scope that worked, and anything that surprised you. The next person to touch this will not have watched it happen.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add hooks/install-voice-queue.sh docs/voice-queue.md
