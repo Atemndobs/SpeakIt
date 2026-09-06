@@ -10,3 +10,7 @@ DerivedData/
 .env
 .env.*
 !.env.example
+
+# Python test artifacts from the hook test suite.
+__pycache__/
+.pytest_cache/
