@@ -40,6 +40,13 @@ consumer. That reframing is the whole design.
   nobody is asking for it.
 - High availability. A homelab dependency is acceptable at this stage.
 
+## A note on `$KOKORO_HOST`
+
+This repository is public. The Kokoro synthesis host is referred to as
+`$KOKORO_HOST` throughout, because it accepts unauthenticated requests and
+naming it here would advertise it. The real hostname lives in the private
+`speakit-mobile` repo and in the `.env` of the projects that call it.
+
 ## Measured constraints
 
 These were established by probing a real cloud session on 2026-09-06, not
