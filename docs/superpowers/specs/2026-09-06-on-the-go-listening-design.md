@@ -40,12 +40,30 @@ consumer. That reframing is the whole design.
   nobody is asking for it.
 - High availability. A homelab dependency is acceptable at this stage.
 
-## A note on `$KOKORO_HOST`
+## Which Kokoro, and why it matters
 
-This repository is public. The Kokoro synthesis host is referred to as
-`$KOKORO_HOST` throughout, because it accepts unauthenticated requests and
-naming it here would advertise it. The real hostname lives in the private
-`speakit-mobile` repo and in the `.env` of the projects that call it.
+There are two Kokoro servers, and the difference is not marginal.
+
+| Server | Where | One sentence |
+|---|---|---|
+| **k8s3** | homelab, tailnet only | **8.13s** |
+| the VPS | public, `$KOKORO_HOST` | 56.99s |
+
+Measured 2026-09-06, same text, byte-identical output. The homelab box is
+about 7x faster. 57s for one sentence is unusable for a player that is meant
+to start speaking on the first chunk.
+
+**Use k8s3**, over the tailnet:
+
+    http://100.127.243.118:8880        (k8s3.goose-neon.ts.net)
+
+It is not reachable from the internet, which is correct and wants keeping. The
+phone is on the tailnet, so no public exposure is needed. An earlier draft of
+this spec pointed at the VPS; that was wrong and cost a benchmark to catch.
+
+The VPS is referred to as `$KOKORO_HOST` rather than by name because this
+repository is public and that host answers unauthenticated requests. It should
+be retired rather than secured, since nothing should be using it.
 
 ## Measured constraints
 
@@ -89,7 +107,7 @@ iOS share sheet / Back Tap ──> Convex ──┤
 ```
 
 The phone is not behind the sandbox proxy, so it reaches both GitHub and
-`$KOKORO_HOST` without difficulty. The proxy constrains only the
+the Kokoro box without difficulty. The proxy constrains only the
 hook.
 
 Note that Convex is deliberately absent from producer 1's live path. It holds
@@ -175,7 +193,7 @@ iOS keychain, never in app storage or a config file.
 
 ### 4. Synthesis
 
-The phone calls `$KOKORO_HOST/v1/audio/speech` directly. Chunk the
+The phone calls k8s3 over the tailnet at `/v1/audio/speech` directly. Chunk the
 text, request chunks with bounded concurrency, and begin playback on the first
 chunk rather than waiting for the whole item. Voicy already does exactly this,
 including the multi-part timeline and cross-part seeking; port that logic rather

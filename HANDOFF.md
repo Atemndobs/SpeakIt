@@ -207,5 +207,9 @@ interface. This is acceptable **only** because the tool is for one person, and
 the user confirmed that explicitly. If it ever becomes a product, the transport
 has to be revisited before anything else.
 
-`$KOKORO_HOST` runs without AVX2 at RTF 2.5. The k8s3 box is the
+There are two Kokoro servers. Benchmarked 2026-09-06 on one sentence, with
+byte-identical output: **k8s3 8.13s, the VPS 56.99s**. Use k8s3, over the
+tailnet at `http://100.127.243.118:8880`. It is not internet-reachable, which
+is correct. The VPS `$KOKORO_HOST` runs without AVX2 and should be retired
+rather than secured. The k8s3 box is the
 fast one, and is what Voicy uses today.
