@@ -1261,7 +1261,7 @@ git commit -m "feat: GitHub client for reading the voice queue branch"
 - Consumes: `GitHubClient`, `RateLimitError`, `reposToCheck`, `unseenItemIds`, `isPlayable`.
 - Produces: `class QueueWatcher { constructor(client: GitHubClient); pollOnce(): Promise<QueueItem[]> }`. Returns newly arrived playable items in chronological order. Never returns the same item twice.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `src/voice-queue/watch.test.ts`:
 
@@ -1336,12 +1336,12 @@ describe('QueueWatcher.pollOnce', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/watch.test.ts`
 Expected: FAIL, cannot resolve `./watch`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/voice-queue/watch.ts`:
 
@@ -1458,12 +1458,12 @@ are not. So the hook pushes a commit, and this polls for it. See
 measurements behind that.
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run`
 Expected: PASS, 22 passed across three test files.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/voice-queue/ scripts/ package.json
