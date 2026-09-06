@@ -862,7 +862,7 @@ Pure functions, no network. This is where the polling strategy is proven correct
   - `unseenItemIds(treePaths: string[], seenIds: Set<string>): string[]`
   - `isPlayable(item: unknown): item is QueueItem`
 
-- [ ] **Step 1: Create the app and add a test runner**
+- [x] **Step 1: Create the app and add a test runner**
 
 The Expo app does not exist yet. Create it, from the mobile-stack checkout:
 
@@ -907,7 +907,7 @@ cp ~/sites/SpeakIt/docs/superpowers/specs/2026-09-06-on-the-go-listening-design.
 cp ~/sites/SpeakIt/docs/superpowers/plans/2026-09-06-voice-queue-transport.md ~/sites/earshot/docs/superpowers/plans/
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `src/voice-queue/select.test.ts`:
 
@@ -988,12 +988,12 @@ describe('isPlayable', () => {
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `npx vitest run`
 Expected: FAIL, cannot resolve `./select`.
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 `src/voice-queue/types.ts`:
 
@@ -1059,12 +1059,12 @@ export function isPlayable(item: unknown): item is QueueItem {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `npx vitest run`
 Expected: PASS, 12 passed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/voice-queue/ scripts/ package.json
