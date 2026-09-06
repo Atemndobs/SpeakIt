@@ -27,7 +27,7 @@ Rename `earshot` freely before Task 6; nothing downstream depends on the name.
 
 ## Global Constraints
 
-- **Never use an em-dash (U+2014), en-dash (U+2013) as punctuation, or a double hyphen standing in for one.** Applies to code, comments, commit messages, and docs. Verify with `grep -rn $'—' . --exclude-dir=.git` returning nothing.
+- **Never use an em-dash (U+2014), en-dash (U+2013) as punctuation, or a double hyphen standing in for one.** Applies to code, comments, commit messages, and docs. Verify with `grep -rn $'\u2014' . --exclude-dir=.git` returning nothing.
 - Branch naming: `<what-is-being-built>/<specific-detail>`, lowercase kebab-case, never prefixed with a tool name.
 - **The hook must always exit 0.** A failure in the voice path must never interrupt a working session.
 - **The hook must never modify the working tree, the index, `HEAD`, or any local branch.** It only creates objects and pushes a ref.

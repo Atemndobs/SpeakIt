@@ -134,7 +134,7 @@ git checkout docs/on-the-go-listening-design
 **2. Commit the plan and this file.**
 
 ```bash
-grep -rn $'—' docs/superpowers/ HANDOFF.md    # must return nothing
+grep -rn $'\u2014' docs/superpowers/ HANDOFF.md    # must return nothing
 git add docs/superpowers HANDOFF.md
 git commit -m "docs: spec, plan and handoff for the voice queue transport"
 ```
@@ -185,7 +185,7 @@ other way round, stop; every assumption downstream is wrong.
 
 **Never use an em-dash, en-dash as punctuation, or a double hyphen standing in
 for one.** Anywhere: code, comments, commit messages, docs. This is a hard user
-rule. Verify with `grep -rn $'—' . --exclude-dir=.git` before committing prose.
+rule. Verify with `grep -rn $'\u2014' . --exclude-dir=.git` before committing prose.
 
 **Branch naming is `<what-is-being-built>/<specific-detail>`**, lowercase
 kebab-case, never prefixed with a tool name.
