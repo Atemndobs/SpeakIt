@@ -1,0 +1,34 @@
+# Notifies a phone when the voice queue gets a new item.
+#
+# Triggered by the Stop hook's own push, so there is no polling and no server.
+# Needs one repo secret, EXPO_PUSH_TOKEN, copied from the app's voice queue
+# settings screen.
+name: voice-queue-notify
+
+on:
+  push:
+    branches: ['voice/queue']
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: voice/queue
+
+      - name: Notify
+        env:
+          EXPO_PUSH_TOKEN: ${{ secrets.EXPO_PUSH_TOKEN }}
+        run: |
+          if [ -z "$EXPO_PUSH_TOKEN" ]; then
+            echo "::notice::EXPO_PUSH_TOKEN is not set, skipping the notification."
+            exit 0
+          fi
+          # Ids lead with a sortable UTC timestamp, so the newest sorts last.
+          newest="$(ls items/*.json 2>/dev/null | sort | tail -1)"
+          if [ -z "$newest" ]; then
+            echo "::notice::no items on the branch, nothing to notify."
+            exit 0
+          fi
+          python3 .github/scripts/notify_push.py "$newest" "$EXPO_PUSH_TOKEN"

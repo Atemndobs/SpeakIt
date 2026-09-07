@@ -29,6 +29,14 @@ chmod +x "$target/.claude/hooks/voice-queue-stop.sh" "$target/.claude/hooks/lib/
 
 echo "Installed hook and $(printf '%s\n' $libs | wc -l | tr -d ' ') libs into $target/.claude/hooks/"
 
+# The notification workflow. The queue works without it; this is what makes a
+# response arrive while the app is closed.
+mkdir -p "$target/.github/workflows" "$target/.github/scripts"
+cp "$src/voice-queue-notify.yml" "$target/.github/workflows/"
+cp "$src/lib/notify_push.py" "$target/.github/scripts/"
+echo "Wrote .github/workflows/voice-queue-notify.yml"
+echo "Set the repo secret EXPO_PUSH_TOKEN to enable it."
+
 settings="$target/.claude/settings.json"
 if [ -f "$settings" ]; then
   echo "A settings.json already exists. Add this Stop hook entry by hand:"
