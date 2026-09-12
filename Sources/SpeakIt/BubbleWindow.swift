@@ -206,8 +206,7 @@ private struct PlayerView: View {
                 CircleBadge(
                     engine: engine,
                     window: window,
-                    onExpand: { window.setExpanded(true) },
-                    onClose: closePlayer
+                    onExpand: { window.setExpanded(true) }
                 )
             }
         }
@@ -224,10 +223,11 @@ private struct CircleBadge: View {
     @ObservedObject var engine: TTSEngine
     @ObservedObject var window: BubbleWindow
     let onExpand: () -> Void
-    let onClose: () -> Void
 
     @State private var dragging = false
     @State private var hovering = false
+
+    private var willPlay: Bool { engine.isPaused || !engine.isSpeaking }
 
     var body: some View {
         ZStack {
@@ -251,12 +251,14 @@ private struct CircleBadge: View {
                 .padding(4)
                 .animation(.linear(duration: 0.12), value: engine.progress)
 
-            // Hover reveals that tapping opens the full player.
+            // Hover shows what a left-click will do (play / pause). Right-click
+            // opens the full player.
             if hovering {
                 Circle().fill(.black.opacity(0.45)).frame(width: 40, height: 40)
-                Image(systemName: "arrow.up.backward.and.arrow.down.forward")
-                    .font(.system(size: 12, weight: .heavy))
+                Image(systemName: willPlay ? "play.fill" : "pause.fill")
+                    .font(.system(size: 13, weight: .black))
                     .foregroundStyle(.white)
+                    .offset(x: willPlay ? 1 : 0)
             } else if engine.isPaused {
                 Image(systemName: "pause.fill")
                     .font(.system(size: 13, weight: .black))
@@ -268,16 +270,16 @@ private struct CircleBadge: View {
         .padding(4)
         .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
         .contentShape(Circle())
-        .help(engine.currentTitle.isEmpty ? "SpeakIt — click for full player" : "Reading: \(engine.currentTitle) — click for full player")
-        .onTapGesture { onExpand() }
+        .help(helpText)
+        .onTapGesture { engine.togglePause() }
         .onHover { hovering = $0 }
+        .overlay(RightClickCatcher { onExpand() })
         .simultaneousGesture(dragGesture)
-        .contextMenu {
-            Button("Expand") { onExpand() }
-            Divider()
-            Button("Close Player") { onClose() }
-            Button("Quit SpeakIt") { NSApp.terminate(nil) }
-        }
+    }
+
+    private var helpText: String {
+        let base = engine.currentTitle.isEmpty ? "SpeakIt" : "Reading: \(engine.currentTitle)"
+        return "\(base) — click: play/pause · right-click: open"
     }
 
     private var dragGesture: some Gesture {
@@ -295,6 +297,38 @@ private struct CircleBadge: View {
             }
     }
 
+}
+
+/// Transparent overlay that runs `action` on a right-click (or control-click).
+/// It only claims right-mouse events — its hitTest returns nil for everything
+/// else, so left-click taps and drags fall through to the SwiftUI view beneath.
+private struct RightClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let v = RightClickNSView()
+        v.action = action
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? RightClickNSView)?.action = action
+    }
+
+    private final class RightClickNSView: NSView {
+        var action: (() -> Void)?
+
+        override func rightMouseDown(with event: NSEvent) { action?() }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            switch NSApp.currentEvent?.type {
+            case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+                return self
+            default:
+                return nil
+            }
+        }
+    }
 }
 
 /// Spotify-mini-player-style transport card, resizable by dragging the right
